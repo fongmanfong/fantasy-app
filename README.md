@@ -29,7 +29,8 @@ AI-powered NBA Fantasy Basketball optimization. Connects to Yahoo Fantasy, analy
 3. Fill in:
    - **Application Name**: Fantasy IQ (or anything)
    - **Application Type**: Installed Application
-   - **Redirect URI(s)**: `http://localhost:8000/api/auth/yahoo/callback`
+   - **Homepage URL**: `http://localhost:3000`
+   - **Redirect URI**: `https://localhost`
    - **API Permissions**: Fantasy Sports → Read
 4. Save. Copy your **Client ID** and **Client Secret**
 
@@ -45,39 +46,45 @@ Edit `.env`:
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
 
-### 3. Start the backend
+### 3. Install dependencies
 
 ```bash
+# Python
 python3 -m venv .venv
 source .venv/bin/activate
 pip install fastapi uvicorn sqlalchemy yahoo-fantasy-api requests beautifulsoup4 \
             pandas numpy apscheduler anthropic python-dotenv httpx aiosqlite
 
-cd fantasy-app   # repo root
-python -m uvicorn backend.main:app --reload --port 8000
+# Node
+cd frontend && npm install && cd ..
 ```
 
-The API will be available at `http://localhost:8000`.
-
-### 4. Start the frontend
+### 4. Start the app
 
 ```bash
-cd frontend
-npm install
-npm run dev
+./start.sh
 ```
 
-The app will be available at `http://localhost:3000`.
+This starts both the backend (port 8000) and frontend (port 3000) in the background. Logs are written to `/tmp/fantasy-backend.log` and `/tmp/fantasy-frontend.log`.
+
+To stop everything:
+```bash
+lsof -ti :8000 :3000 | xargs kill -9
+```
 
 ### 5. First-run setup
 
 Open `http://localhost:3000`. You'll be guided through:
 
 1. **Enter Yahoo credentials** — paste your Client ID and Client Secret
-2. **Authorize with Yahoo** — browser redirect to Yahoo and back
-3. **Add your league** — enter your Yahoo Fantasy league ID (found in the league URL)
+2. **Authorize with Yahoo** — Yahoo opens in a new tab, you approve, then copy the full redirect URL (looks like `https://localhost?code=...`) and paste it back into the app
+3. **Add your league** — enter your Yahoo Fantasy league ID (found in the league URL, e.g. `fantasysports.yahoo.com/nba/28641`)
 
 Your league data will sync automatically in the background.
+
+### Subsequent launches
+
+Just run `./start.sh` — all your credentials, league connections, and synced data are persisted in `data/fantasy.db` and will be available immediately.
 
 ---
 
