@@ -597,42 +597,34 @@ class YahooService:
                 f"/team/nba.l.{league.yahoo_league_id}.t.{my_team.yahoo_team_id}/matchups"
             )
             content = data.get("fantasy_content", {})
-            matchups_raw = (
-                content.get("team", [{}, {}])[1]
-                .get("matchups", {})
-            )
+            matchups_raw = content.get("team", [{}, {}])[1].get("matchups", {})
 
             for key, val in matchups_raw.items():
-                if key == "count":
-                    continue
-                if not isinstance(val, dict):
+                if key == "count" or not isinstance(val, dict):
                     continue
                 matchup_data = val.get("matchup", {})
-                matchup_week = int(matchup_data.get("week", 0))
-                if matchup_week != week:
+                if int(matchup_data.get("week", 0)) != week:
                     continue
 
-                teams_in_matchup = matchup_data.get("teams", {})
+                # Teams are under matchup["0"]["teams"]["0"] and ["1"]
+                teams_container = matchup_data.get("0", {}).get("teams", {})
+                # stat_winners tells us who's winning each category
+                stat_winners = matchup_data.get("stat_winners", [])
+
                 home_team_id = away_team_id = None
-                home_stats = away_stats = {}
-                home_score = away_score = None
+                home_stats = {}
+                away_stats = {}
+                category_results = {}
 
-                for tkey, tval in teams_in_matchup.items():
-                    if tkey == "count":
+                for tkey, tval in teams_container.items():
+                    if tkey == "count" or not isinstance(tval, dict):
                         continue
-                    if not isinstance(tval, dict):
-                        continue
-                    team_data = tval.get("team", [{}])
-                    team_info = team_data[0] if isinstance(team_data[0], list) else [team_data[0]]
 
-                    yahoo_tid = None
-                    team_pts = None
-                    for item in team_info:
-                        if isinstance(item, dict):
-                            if "team_id" in item:
-                                yahoo_tid = str(item["team_id"])
-                            if "team_points" in item:
-                                team_pts = float(item["team_points"].get("total", 0) or 0)
+                    team_data = tval.get("team", [])
+                    parsed = self._parse_team_info(team_data)
+                    yahoo_tid = parsed["yahoo_team_id"]
+                    if not yahoo_tid:
+                        continue
 
                     db_team = self.db.query(Team).filter_by(
                         league_id=league.id, yahoo_team_id=yahoo_tid
@@ -640,35 +632,57 @@ class YahooService:
                     if not db_team:
                         continue
 
+                    # Parse stats from second element of team_data
+                    stats = {}
+                    for elem in team_data[1:]:
+                        if not isinstance(elem, dict):
+                            continue
+                        ts = elem.get("team_stats", {})
+                        if not ts:
+                            continue
+                        for stat_entry in ts.get("stats", []):
+                            s = stat_entry.get("stat", stat_entry) if isinstance(stat_entry, dict) else {}
+                            stat_id = str(s.get("stat_id", ""))
+                            name = YAHOO_STAT_MAP.get(stat_id, stat_id)
+                            try:
+                                stats[name] = float(s.get("value", 0) or 0)
+                            except (ValueError, TypeError):
+                                stats[name] = 0.0
+
                     if home_team_id is None:
                         home_team_id = db_team.id
-                        home_score = team_pts
+                        home_stats = stats
                     else:
                         away_team_id = db_team.id
-                        away_score = team_pts
+                        away_stats = stats
 
-                # Mark all existing matchups for this week as not current
-                self.db.query(Matchup).filter_by(
-                    league_id=league.id, week=week
-                ).update({"is_current": False})
+                # Build category results from stat_winners
+                my_team_key = f"466.l.{league.yahoo_league_id}.t.{my_team.yahoo_team_id}"
+                for sw_entry in stat_winners:
+                    sw = sw_entry.get("stat_winner", sw_entry) if isinstance(sw_entry, dict) else {}
+                    stat_id = str(sw.get("stat_id", ""))
+                    winner_key = sw.get("winner_team_key", "")
+                    name = YAHOO_STAT_MAP.get(stat_id, stat_id)
+                    if winner_key == my_team_key:
+                        category_results[name] = "home" if home_team_id and self.db.query(Team).get(home_team_id).is_my_team else "away"
+                    elif winner_key:
+                        category_results[name] = "away" if home_team_id and self.db.query(Team).get(home_team_id).is_my_team else "home"
 
-                existing = self.db.query(Matchup).filter_by(
-                    league_id=league.id, week=week,
-                    home_team_id=home_team_id, away_team_id=away_team_id
-                ).first()
-                if not existing:
-                    existing = Matchup(
-                        league_id=league.id,
-                        week=week,
-                        home_team_id=home_team_id,
-                        away_team_id=away_team_id,
-                    )
-                    self.db.add(existing)
+                # Clear and re-save this week's matchup
+                self.db.query(Matchup).filter_by(league_id=league.id, week=week).delete()
 
-                existing.home_score = home_score
-                existing.away_score = away_score
-                existing.is_current = True
-                existing.updated_at = datetime.utcnow()
+                matchup = Matchup(
+                    league_id=league.id,
+                    week=week,
+                    home_team_id=home_team_id,
+                    away_team_id=away_team_id,
+                    home_stats=home_stats,
+                    away_stats=away_stats,
+                    category_results=category_results,
+                    is_current=True,
+                )
+                self.db.add(matchup)
+                break  # only need current week
 
             self.db.commit()
             self._complete_sync(log, "success")

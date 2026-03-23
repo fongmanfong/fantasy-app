@@ -154,9 +154,13 @@ class StatsEngine:
         active_stats = self.get_active_stat_names(league_id)
         scoring_type = self.get_scoring_type(league_id)
 
-        # Aggregate my team's stats and opponent's stats
-        my_stats = self._aggregate_team_stats(my_team.id, league_id)
-        opp_stats = self._aggregate_team_stats(opponent_id, league_id) if opponent_id else {}
+        # Use stored matchup stats (set during sync from Yahoo live data)
+        if matchup.home_team_id == my_team.id:
+            my_stats = matchup.home_stats or {}
+            opp_stats = matchup.away_stats or {}
+        else:
+            my_stats = matchup.away_stats or {}
+            opp_stats = matchup.home_stats or {}
 
         result = {
             "week": league.current_week,
