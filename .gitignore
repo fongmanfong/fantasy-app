@@ -2,16 +2,21 @@
 .venv/
 __pycache__/
 *.pyc
-
-# Node
-node_modules/
-.next/
+*.egg-info/
+build/
+dist/
 
 # Data
 data/
+*.duckdb
+*.duckdb.wal
 
 # Secrets
 .env
 
 # OS
 .DS_Store
+
+# Local .env backups — never commit
+.env.bak.*
+.env.*.bak

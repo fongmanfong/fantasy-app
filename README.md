@@ -1,152 +1,149 @@
-# Fantasy IQ — NBA Fantasy Intelligence Platform
+# fantasy
 
-AI-powered NBA Fantasy Basketball optimization. Connects to Yahoo Fantasy, analyzes your league, and uses Claude to recommend optimal moves — all contextualized to your league's specific scoring format.
+A command-line tool that pulls your Yahoo Fantasy NBA league's current state into a
+[DuckDB](https://duckdb.org) database so you can query it with SQL.
 
-## Features
-
-- **Multi-league support** — add any Yahoo Fantasy league; all intelligence adapts to that league's scoring type and categories
-- **AI recommendations** — Claude analyzes your roster, matchup, free agents, and player news to suggest the best moves (or tell you to stand pat)
-- **Natural language chat** — ask anything about your league in plain English
-- **Live matchup analysis** — category-by-category breakdown, winning/losing projection
-- **Waiver wire intelligence** — free agents ranked by value for your specific league
-- **Automatic data sync** — configurable schedule keeps everything fresh
-
----
+Each run appends a **snapshot** — league settings, every team, every roster, the free-agent
+pool, and per-player stat splits — stamped with a pull id and timestamp. Nothing is
+overwritten, so you accumulate week-over-week history for free. `v_*` views always resolve
+to the most recent pull.
 
 ## Setup
 
-### Prerequisites
+### 1. Register a Yahoo application
 
-- Python 3.11+
-- Node.js 18+ (install via `brew install node`)
-- An [Anthropic API key](https://console.anthropic.com/)
-- A Yahoo Developer account (free)
+At [developer.yahoo.com/apps](https://developer.yahoo.com/apps/), create an app with:
 
-### 1. Create a Yahoo Developer App
+| Field | Value |
+|---|---|
+| Application Type | **Installed Application** |
+| Redirect URI | `https://localhost` |
+| API Permissions | Fantasy Sports — Read |
 
-1. Go to [developer.yahoo.com/apps](https://developer.yahoo.com/apps/) and sign in
-2. Click **Create an App**
-3. Fill in:
-   - **Application Name**: Fantasy IQ (or anything)
-   - **Application Type**: Installed Application
-   - **Homepage URL**: `http://localhost:3000`
-   - **Redirect URI**: `https://localhost`
-   - **API Permissions**: Fantasy Sports → Read
-4. Save. Copy your **Client ID** and **Client Secret**
+### 2. Configure and install
 
-### 2. Clone and configure
-
-```bash
-cd fantasy-app
-cp .env.example .env
-```
-
-Edit `.env`:
-```
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-```
-
-### 3. Install dependencies
-
-```bash
-# Python
+```sh
+cp .env.example .env      # then fill in your client id and secret
 python3 -m venv .venv
-source .venv/bin/activate
-pip install fastapi uvicorn sqlalchemy yahoo-fantasy-api requests beautifulsoup4 \
-            pandas numpy apscheduler anthropic python-dotenv httpx aiosqlite
-
-# Node
-cd frontend && npm install && cd ..
+.venv/bin/pip install -e .
 ```
 
-### 4. Start the app
+### 3. Authenticate
 
-```bash
-./start.sh
+```sh
+fantasy auth login
 ```
 
-This starts both the backend (port 8000) and frontend (port 3000) in the background. Logs are written to `/tmp/fantasy-backend.log` and `/tmp/fantasy-frontend.log`.
+This prints a Yahoo consent URL. Approve it in a browser; Yahoo redirects to
+`https://localhost`, which will not load — that is expected. Copy the full URL out of the
+address bar and paste it back at the prompt.
 
-To stop everything:
-```bash
-lsof -ti :8000 :3000 | xargs kill -9
-```
-
-### 5. First-run setup
-
-Open `http://localhost:3000`. You'll be guided through:
-
-1. **Enter Yahoo credentials** — paste your Client ID and Client Secret
-2. **Authorize with Yahoo** — Yahoo opens in a new tab, you approve, then copy the full redirect URL (looks like `https://localhost?code=...`) and paste it back into the app
-3. **Add your league** — enter your Yahoo Fantasy league ID (found in the league URL, e.g. `fantasysports.yahoo.com/nba/28641`)
-
-Your league data will sync automatically in the background.
-
-### Subsequent launches
-
-Just run `./start.sh` — all your credentials, league connections, and synced data are persisted in `data/fantasy.db` and will be available immediately.
-
----
+Tokens are written to `~/.fantasy/token.json` (mode `600`) and refreshed automatically.
+They are deliberately kept **out of** the database, which holds only league data.
 
 ## Usage
 
-| Page | What it does |
-|------|-------------|
-| **My Team** | Full roster with stats, injury status, and value scores |
-| **Matchup** | This week's matchup — category breakdown, projected outcome |
-| **League** | Standings for all teams |
-| **Free Agents** | Available players ranked by value for your league's scoring |
-| **Recommendations** | AI-generated analysis: add/drop, trades, start/sit |
-| **Chat** | Ask anything about your league in natural language |
-| **Settings** | Manage leagues, sync schedule, and credentials |
-
-### Syncing data
-
-- Click **Sync Now** in the sidebar at any time
-- Or configure an automatic schedule in Settings (default: every 6 hours)
-- Player news refreshes every 3 hours automatically
-
----
-
-## Project Structure
-
-```
-fantasy-app/
-├── backend/
-│   ├── main.py                 # FastAPI app + lifespan
-│   ├── scheduler.py            # APScheduler background sync
-│   ├── database/
-│   │   ├── models.py           # SQLAlchemy models
-│   │   └── connection.py       # DB session management
-│   ├── services/
-│   │   ├── yahoo_service.py    # Yahoo OAuth + data extraction
-│   │   ├── news_service.py     # Player news scraping
-│   │   ├── stats_engine.py     # Statistical analysis (pandas)
-│   │   └── agent_service.py    # Claude AI agent with tools
-│   └── routers/
-│       ├── auth.py             # Yahoo OAuth endpoints
-│       ├── leagues.py          # League management + sync
-│       ├── teams.py            # Teams, rosters, matchups
-│       └── agent.py            # Chat + recommendations
-├── frontend/
-│   ├── app/                    # Next.js app router pages
-│   ├── components/             # React components
-│   ├── hooks/                  # useLeague context
-│   └── lib/                    # API client + utilities
-└── data/
-    └── fantasy.db              # SQLite database (auto-created)
+```sh
+fantasy leagues                      # list the leagues on your account
+fantasy pull                         # snapshot your league (or pass a league key)
+fantasy pull 466.l.28641 --skip-stats
+fantasy sql "select * from v_my_team"
 ```
 
----
+| Command | Description |
+|---|---|
+| `fantasy auth login` | Authorize this machine against Yahoo. |
+| `fantasy auth status` | Show credential/token state and confirm the API responds. |
+| `fantasy auth logout` | Delete the stored token. |
+| `fantasy leagues` | List your NBA leagues and their league keys. |
+| `fantasy pull [LEAGUE_KEY]` | Snapshot a league. Omit the key if you only have one. |
+| `fantasy pulls` | List past pulls with status and timestamps. |
+| `fantasy tables` | Every table and view with row counts. |
+| `fantasy sql "<query>"` | Run ad-hoc SQL. |
 
-## Adding More Leagues
+`pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
+`--fa-limit N` (cap the free-agent pool; default is the whole pool).
 
-You can add multiple Yahoo Fantasy leagues (any sport, any format). Each league's intelligence is fully independent and contextualized to that league's settings. Go to Settings → Add League and enter the league ID.
+A failing step is recorded against the pull and the rest continues, so a single bad roster
+call does not lose the snapshot. Such a pull is marked `partial`.
 
----
+## Schema
+
+Snapshot tables — every row carries `pull_id` and `league_key`:
+
+| Table | Contents |
+|---|---|
+| `pulls` | One row per run: timestamp, status, error note. |
+| `leagues` | Name, season, week, team count, scoring type. |
+| `league_settings` | Playoff structure, waivers, FAAB, draft type. |
+| `league_stat_categories` | The league's scoring categories. |
+| `league_roster_positions` | Roster slots and counts. |
+| `teams` | Every team, manager, record, standing, `is_my_team`. |
+| `players` | Player attributes: name, NBA team, eligible positions, injury status, birth date. |
+| `rosters` | Which player is on which team, in which slot. Free agents have `is_free_agent = true`. |
+| `player_stats` | **Long format** — one row per (player, period, stat). |
+
+`player_stats` is long rather than one column per category on purpose: leagues differ in
+their scoring categories and Yahoo adds stat ids, so a wide table would need a migration
+every time. Use DuckDB's `PIVOT` when you want it wide.
+
+Views resolving to the latest pull: `v_leagues`, `v_league_settings`, `v_stat_categories`,
+`v_roster_positions`, `v_teams`, `v_players`, `v_rosters`, `v_player_stats`,
+`v_roster_players`, `v_my_team`, `v_free_agents`.
+
+### Example queries
+
+```sql
+-- My roster
+SELECT full_name, selected_position, positions, status FROM v_my_team;
+
+-- Standings
+SELECT standing, name, manager_name, wins, losses FROM v_teams ORDER BY standing;
+
+-- Top free agents by last-14-day scoring
+SELECT p.full_name, s.value AS pts
+FROM v_free_agents p
+JOIN v_player_stats s USING (league_key, player_key)
+WHERE s.stat_period = 'last_14' AND s.stat_name = 'PTS'
+ORDER BY pts DESC LIMIT 20;
+
+-- Wide stat table for the season
+PIVOT (SELECT player_key, stat_name, value FROM v_player_stats WHERE stat_period = 'season')
+ON stat_name USING first(value);
+
+-- What changed on my roster between the two most recent pulls
+SELECT pull_id, player_key FROM rosters
+WHERE team_key = (SELECT team_key FROM v_teams WHERE is_my_team)
+  AND pull_id IN (SELECT pull_id FROM pulls ORDER BY pull_id DESC LIMIT 2);
+```
+
+## Layout
+
+```
+fantasy/
+├── cli.py            # Typer commands
+├── config.py         # env + paths
+├── pull.py           # snapshot orchestration
+├── yahoo/
+│   ├── auth.py       # OAuth 2.0, token file
+│   ├── client.py     # authenticated API calls
+│   └── parse.py      # Yahoo JSON → flat rows (pure functions)
+└── store/
+    ├── db.py         # DuckDB access
+    └── schema.sql    # tables + views
+```
+
+`tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures with no network:
+
+```sh
+.venv/bin/python tests/test_parse.py
+```
 
 ## Notes
 
-- All data is stored locally in `data/fantasy.db`
-- Yahoo credentials and tokens are stored in the database, not in `.env`
-- The app never writes back to Yahoo — it is read-only
+DuckDB takes an **exclusive lock** on the database file. Two `fantasy` commands cannot run
+at once, and an open `duckdb` shell will block a `pull`. Read-only commands (`sql`, `tables`,
+`pulls`) open the file read-only and can share it.
+
+Yahoo caps multi-entity requests at 25, so rosters, stats, and the free-agent pool are
+fetched in batches; a full pull with all four stat periods makes a few hundred calls.
