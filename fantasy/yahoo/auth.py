@@ -20,10 +20,14 @@ from .. import config
 AUTH_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
 REDIRECT_URI = "https://localhost"
-# Yahoo grants Fantasy access via the app's own permissions, but asking for the
-# fantasy read scope explicitly makes a misconfigured app fail loudly at consent
-# time rather than with an opaque 403 on every later request.
-SCOPE = ["openid", "fspt-r"]
+# Send no scope by default. Yahoo rejects the whole authorization request with
+# `invalid_scope` if the app registration lacks any scope named -- including
+# "fspt-r" itself -- so naming one buys nothing and breaks apps that would
+# otherwise work. Omitting it lets the app's registered permissions decide,
+# which is what the long-standing Yahoo Fantasy clients do.
+# Override with YAHOO_SCOPE if you need a specific scope.
+_scope_env = os.getenv("YAHOO_SCOPE", "")
+SCOPE = _scope_env.split() if _scope_env.strip() else None
 
 
 def _write_private(path, payload: dict) -> None:
