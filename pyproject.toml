@@ -23,3 +23,4 @@ include = ["fantasy*"]
 
 [tool.setuptools.package-data]
 "fantasy.store" = ["*.sql"]
+"fantasy.templates" = ["*.html"]
