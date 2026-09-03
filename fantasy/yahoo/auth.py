@@ -20,7 +20,10 @@ from .. import config
 AUTH_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
 REDIRECT_URI = "https://localhost"
-SCOPE = ["openid"]
+# Yahoo grants Fantasy access via the app's own permissions, but asking for the
+# fantasy read scope explicitly makes a misconfigured app fail loudly at consent
+# time rather than with an opaque 403 on every later request.
+SCOPE = ["openid", "fspt-r"]
 
 
 def _write_private(path, payload: dict) -> None:
