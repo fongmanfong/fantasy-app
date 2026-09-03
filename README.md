@@ -48,6 +48,7 @@ fantasy leagues                      # list the leagues on your account
 fantasy pull                         # snapshot your league (or pass a league key)
 fantasy pull 466.l.28641 --skip-stats
 fantasy sql "select * from v_my_team"
+fantasy view                         # open the league interface in your browser
 ```
 
 | Command | Description |
@@ -59,10 +60,40 @@ fantasy sql "select * from v_my_team"
 | `fantasy pull [LEAGUE_KEY]` | Snapshot a league. Omit the key if you only have one. |
 | `fantasy pulls` | List past pulls with status and timestamps. |
 | `fantasy tables` | Every table and view with row counts. |
+| `fantasy view` | Launch the league interface in your browser. |
 | `fantasy sql "<query>"` | Run ad-hoc SQL. |
 
 `pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
 `--fa-limit N` (cap the free-agent pool; default is the whole pool).
+
+### The interface
+
+`fantasy view` starts a local read-only server and opens a single page with four
+views, switched in the UI rather than by CLI flags:
+
+| View | What it shows |
+|---|---|
+| **Roster** | Any team's players across the nine categories, plus a team strength strip. |
+| **Standings** | Every team's weekly output per category, with a rank in each. |
+| **Free agents** | The available pool, filterable by position. |
+| **Compare** | Two teams side by side with the category-by-category edge. |
+
+Cells are shaded by that player's percentile among every rostered player in the
+league — **turnovers inverted**, so green always means good. `△` marks players
+under 20 games, where a per-game rate is noise.
+
+Options: `--port 8777`, `--no-open`. The snapshot is opened **read-only**, so
+other `fantasy` commands and a `duckdb` shell still work while it runs.
+
+Behind it is a small JSON API, useful on its own:
+
+```
+GET /api/meta                          league, teams, periods, pull info
+GET /api/roster?team=<key>&period=…    one team's players with percentiles
+GET /api/standings?period=…            every team's category output and ranks
+GET /api/free-agents?period=…          the available pool
+GET /api/compare?a=<key>&b=<key>       head-to-head across the nine categories
+```
 
 A failing step is recorded against the pull and the rest continues, so a single bad roster
 call does not lose the snapshot. Such a pull is marked `partial`.
@@ -124,6 +155,10 @@ fantasy/
 ├── cli.py            # Typer commands
 ├── config.py         # env + paths
 ├── pull.py           # snapshot orchestration
+├── query.py          # read-side queries over the latest snapshot
+├── server.py         # local JSON API + app host
+├── templates/
+│   └── app.html      # the interface
 ├── yahoo/
 │   ├── auth.py       # OAuth 2.0, token file
 │   ├── client.py     # authenticated API calls

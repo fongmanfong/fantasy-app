@@ -1,13 +1,13 @@
 """`fantasy` — pull a Yahoo Fantasy NBA league into DuckDB and query it."""
 import logging
-import sys
+import webbrowser
 from datetime import datetime, timezone
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import config, pull as pull_mod
+from . import config, pull as pull_mod, server as server_mod
 from .store import db
 from .store.db import NoDatabase
 from .yahoo import auth
@@ -215,6 +215,36 @@ def tables_cmd():
     except NoDatabase as exc:
         fail(str(exc))
     render(rows, ["name", "rows"], title=str(config.DB_PATH))
+
+
+@app.command("view")
+def view_cmd(
+    port: int = typer.Option(8777, "--port", help="Port to serve on."),
+    open_browser: bool = typer.Option(True, "--open/--no-open",
+                                      help="Open the interface in your browser."),
+):
+    """Open the league interface: rosters, standings, free agents, compare."""
+    try:
+        httpd, con = server_mod.serve(port)
+    except NoDatabase as exc:
+        fail(str(exc))
+    except OSError as exc:
+        fail(f"could not bind port {port}: {exc}. Try `fantasy view --port 8778`.")
+
+    url = f"http://127.0.0.1:{port}/"
+    console.print(f"[green]League interface[/green] running at [bold]{url}[/bold]")
+    console.print("[dim]The snapshot is opened read-only, so other fantasy "
+                  "commands still work. Ctrl-C to stop.[/dim]")
+    if open_browser:
+        webbrowser.open(url)
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        console.print("\nStopped.")
+    finally:
+        httpd.server_close()
+        con.close()
 
 
 @app.command("sql")
