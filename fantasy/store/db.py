@@ -19,8 +19,19 @@ SNAPSHOT_TABLES = [
 ]
 
 
+class NoDatabase(RuntimeError):
+    """Raised when a read-only command runs before the first pull."""
+
+
 @contextmanager
 def connect(read_only: bool = False):
+    # DuckDB refuses to open a nonexistent file read-only, which would otherwise
+    # surface as an opaque IO error on a fresh checkout.
+    if read_only and not config.DB_PATH.exists():
+        raise NoDatabase(
+            f"No database at {config.DB_PATH} yet. Run `fantasy pull` first."
+        )
+
     config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(config.DB_PATH), read_only=read_only)
     try:

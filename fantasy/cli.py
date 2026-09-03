@@ -9,6 +9,7 @@ from rich.table import Table
 
 from . import config, pull as pull_mod
 from .store import db
+from .store.db import NoDatabase
 from .yahoo import auth
 from .yahoo.client import STAT_PERIODS, YahooClient
 
@@ -159,11 +160,14 @@ def pull_cmd(
 @app.command("pulls")
 def pulls_cmd(limit: int = typer.Option(20, "--limit")):
     """List past pulls."""
-    with db.connect(read_only=True) as con:
-        rows = con.execute(
-            "SELECT pull_id, league_key, pulled_at, status, note "
-            "FROM pulls ORDER BY pull_id DESC LIMIT ?", [limit]
-        ).fetchall()
+    try:
+        with db.connect(read_only=True) as con:
+            rows = con.execute(
+                "SELECT pull_id, league_key, pulled_at, status, note "
+                "FROM pulls ORDER BY pull_id DESC LIMIT ?", [limit]
+            ).fetchall()
+    except NoDatabase as exc:
+        fail(str(exc))
     render(
         [(p, lk, f"{t:%Y-%m-%d %H:%M}", s, (n or "")[:60]) for p, lk, t, s, n in rows],
         ["pull", "league", "pulled_at (UTC)", "status", "note"],
@@ -174,8 +178,11 @@ def pulls_cmd(limit: int = typer.Option(20, "--limit")):
 @app.command("tables")
 def tables_cmd():
     """Show every table and view with its row count."""
-    with db.connect(read_only=True) as con:
-        rows = [(name, db.row_count(con, name)) for name in db.table_names(con)]
+    try:
+        with db.connect(read_only=True) as con:
+            rows = [(name, db.row_count(con, name)) for name in db.table_names(con)]
+    except NoDatabase as exc:
+        fail(str(exc))
     render(rows, ["name", "rows"], title=str(config.DB_PATH))
 
 
@@ -185,13 +192,16 @@ def sql_cmd(
     limit: int = typer.Option(50, "--limit", help="Max rows to print. 0 for all."),
 ):
     """Run ad-hoc SQL."""
-    with db.connect(read_only=True) as con:
-        try:
-            cursor = con.execute(query)
-        except Exception as exc:
-            fail(str(exc))
-        headers = [d[0] for d in cursor.description]
-        rows = cursor.fetchall()
+    try:
+        with db.connect(read_only=True) as con:
+            try:
+                cursor = con.execute(query)
+            except Exception as exc:
+                fail(str(exc))
+            headers = [d[0] for d in cursor.description]
+            rows = cursor.fetchall()
+    except NoDatabase as exc:
+        fail(str(exc))
 
     shown = rows if limit == 0 else rows[:limit]
     render(shown, headers)
