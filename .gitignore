@@ -16,3 +16,7 @@ data/
 
 # OS
 .DS_Store
+
+# Local .env backups — never commit
+.env.bak.*
+.env.*.bak
