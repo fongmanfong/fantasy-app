@@ -8,11 +8,17 @@ previous version of this app.
 """
 
 # Yahoo stat IDs → readable names (NBA).
+#
+# Attempts come before makes in every pair: 3/4, 6/7, 9/10. Yahoo confirms this
+# two ways -- its composite ids encode makes-then-attempts ("9004003" is FGM/A,
+# i.e. stat 4 over stat 3), and its own display_name for stat 10 is "3PTM". The
+# previous version of this app had all three pairs reversed, which silently
+# turned every shooting rate upside down.
 YAHOO_STAT_MAP = {
     "0": "GP", "1": "GS", "2": "MIN",
-    "3": "FGM", "4": "FGA", "5": "FG%",
-    "6": "FTM", "7": "FTA", "8": "FT%",
-    "9": "3PTM", "10": "3PTA", "11": "3PT%",
+    "3": "FGA", "4": "FGM", "5": "FG%",
+    "6": "FTA", "7": "FTM", "8": "FT%",
+    "9": "3PTA", "10": "3PTM", "11": "3PT%",
     "12": "PTS", "13": "OREB", "14": "DREB",
     "15": "REB", "16": "AST", "17": "ST",
     "18": "BLK", "19": "TO", "20": "A/T",

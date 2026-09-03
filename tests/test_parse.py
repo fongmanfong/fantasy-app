@@ -64,6 +64,15 @@ check("is_finished bool", parse.parse_league(SETTINGS)["is_finished"], False)
 cats = parse.parse_stat_categories(SETTINGS)
 check("stat cat count", len(cats), 2)
 check("stat id 12 maps to PTS", cats[0]["name"], "PTS")
+
+# Attempts precede makes in each Yahoo pair. Getting these backwards inverts
+# every shooting rate, and did in the previous version of this app.
+check("stat 3 is FGA not FGM", parse.YAHOO_STAT_MAP["3"], "FGA")
+check("stat 4 is FGM", parse.YAHOO_STAT_MAP["4"], "FGM")
+check("stat 6 is FTA", parse.YAHOO_STAT_MAP["6"], "FTA")
+check("stat 7 is FTM", parse.YAHOO_STAT_MAP["7"], "FTM")
+check("stat 9 is 3PTA", parse.YAHOO_STAT_MAP["9"], "3PTA")
+check("stat 10 is 3PTM", parse.YAHOO_STAT_MAP["10"], "3PTM")
 check("is_only_display parsed", [c["is_only_display"] for c in cats], [False, True])
 
 pos = parse.parse_roster_positions(SETTINGS)
