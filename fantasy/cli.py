@@ -36,10 +36,11 @@ def render(rows: list[tuple], headers: list[str], title: str | None = None) -> N
     """
     Print a result set.
 
-    Rich shrinks columns to fit the terminal, which turns a wide result (a PIVOT
-    over every stat category, say) into unreadable one-character slivers. Past a
-    width the terminal cannot hold, fall back to tab-separated output, which stays
-    legible and pipes cleanly into other tools.
+    Rich shrinks columns to fit the terminal, which turns a many-column result (a
+    PIVOT over every stat category, say) into unreadable one-character slivers.
+    In that case fall back to tab-separated output, which stays legible and pipes
+    cleanly into other tools. With few columns rich wraps long cells acceptably,
+    so keep the table there even when it overflows.
     """
     body = [[_cell(v) for v in row] for row in rows]
     widths = [
@@ -48,7 +49,7 @@ def render(rows: list[tuple], headers: list[str], title: str | None = None) -> N
     ]
     needed = sum(widths) + 3 * len(headers) + 1
 
-    if needed > console.width:
+    if needed > console.width and len(headers) > 8:
         if title:
             console.print(f"[bold]{title}[/bold]")
         console.print("\t".join(str(h) for h in headers), highlight=False)
