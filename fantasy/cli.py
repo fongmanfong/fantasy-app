@@ -28,12 +28,42 @@ def fail(message: str) -> None:
     raise typer.Exit(1)
 
 
+def _cell(value) -> str:
+    return "" if value is None else str(value)
+
+
 def render(rows: list[tuple], headers: list[str], title: str | None = None) -> None:
+    """
+    Print a result set.
+
+    Rich shrinks columns to fit the terminal, which turns a wide result (a PIVOT
+    over every stat category, say) into unreadable one-character slivers. Past a
+    width the terminal cannot hold, fall back to tab-separated output, which stays
+    legible and pipes cleanly into other tools.
+    """
+    body = [[_cell(v) for v in row] for row in rows]
+    widths = [
+        max([len(str(h))] + [len(r[i]) for r in body]) if body else len(str(h))
+        for i, h in enumerate(headers)
+    ]
+    needed = sum(widths) + 3 * len(headers) + 1
+
+    if needed > console.width:
+        if title:
+            console.print(f"[bold]{title}[/bold]")
+        console.print("\t".join(str(h) for h in headers), highlight=False)
+        for row in body:
+            console.print("\t".join(row), highlight=False)
+        console.print(
+            f"[dim]{len(headers)} columns — shown tab-separated, too wide to tabulate[/dim]"
+        )
+        return
+
     table = Table(title=title, header_style="bold", show_lines=False)
     for header in headers:
         table.add_column(str(header))
-    for row in rows:
-        table.add_row(*["" if v is None else str(v) for v in row])
+    for row in body:
+        table.add_row(*row)
     console.print(table)
 
 
