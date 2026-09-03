@@ -1,13 +1,16 @@
 """`fantasy` — pull a Yahoo Fantasy NBA league into DuckDB and query it."""
 import logging
-import sys
+import re
+import tempfile
+import webbrowser
 from datetime import datetime, timezone
+from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import config, pull as pull_mod
+from . import config, pull as pull_mod, view as view_mod
 from .store import db
 from .store.db import NoDatabase
 from .yahoo import auth
@@ -215,6 +218,43 @@ def tables_cmd():
     except NoDatabase as exc:
         fail(str(exc))
     render(rows, ["name", "rows"], title=str(config.DB_PATH))
+
+
+@app.command("view")
+def view_cmd(
+    team: str = typer.Option(None, "--team", "-t",
+                             help="Team name. Default: your own team."),
+    period: str = typer.Option("season", "--period", "-p",
+                               help="season | last_7 | last_14 | last_30"),
+    output: str = typer.Option(None, "--out", "-o",
+                               help="Where to write the HTML. Default: a temp file."),
+    open_browser: bool = typer.Option(True, "--open/--no-open",
+                                      help="Open the page in your browser."),
+):
+    """Open a team's roster and category strength as an HTML page."""
+    try:
+        with db.connect(read_only=True) as con:
+            payload = view_mod.build(con, team_name=team, period=period)
+    except NoDatabase as exc:
+        fail(str(exc))
+    except Exception as exc:
+        fail(str(exc))
+
+    if output:
+        path = Path(output)
+    else:
+        slug = re.sub(r"[^a-z0-9]+", "-", payload["team"]["name"].lower()).strip("-")
+        path = Path(tempfile.gettempdir()) / f"fantasy-{slug}.html"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(view_mod.render(payload))
+
+    console.print(
+        f"[green]{payload['team']['name']}[/green] — {len(payload['players'])} players, "
+        f"{payload['period']} · pull #{payload['pull']['id']}"
+    )
+    console.print(f"[dim]{path}[/dim]")
+    if open_browser:
+        webbrowser.open(path.resolve().as_uri())
 
 
 @app.command("sql")

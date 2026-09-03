@@ -48,6 +48,7 @@ fantasy leagues                      # list the leagues on your account
 fantasy pull                         # snapshot your league (or pass a league key)
 fantasy pull 466.l.28641 --skip-stats
 fantasy sql "select * from v_my_team"
+fantasy view                         # open the roster as an HTML page
 ```
 
 | Command | Description |
@@ -59,10 +60,16 @@ fantasy sql "select * from v_my_team"
 | `fantasy pull [LEAGUE_KEY]` | Snapshot a league. Omit the key if you only have one. |
 | `fantasy pulls` | List past pulls with status and timestamps. |
 | `fantasy tables` | Every table and view with row counts. |
+| `fantasy view` | Open a team's roster and category strength as an HTML page in your browser. |
 | `fantasy sql "<query>"` | Run ad-hoc SQL. |
 
 `pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
 `--fa-limit N` (cap the free-agent pool; default is the whole pool).
+
+`view` options: `--team "Name"` (default: your own team), `--period last_14`,
+`--out path.html`, `--no-open` (write the file without launching a browser). Each
+cell is shaded by that player's percentile among every rostered player in the
+league, with turnovers inverted so green always means good.
 
 A failing step is recorded against the pull and the rest continues, so a single bad roster
 call does not lose the snapshot. Such a pull is marked `partial`.
@@ -124,6 +131,9 @@ fantasy/
 ├── cli.py            # Typer commands
 ├── config.py         # env + paths
 ├── pull.py           # snapshot orchestration
+├── view.py           # HTML roster view
+├── templates/
+│   └── roster.html   # the view's markup
 ├── yahoo/
 │   ├── auth.py       # OAuth 2.0, token file
 │   ├── client.py     # authenticated API calls
