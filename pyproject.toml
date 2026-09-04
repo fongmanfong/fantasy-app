@@ -9,6 +9,7 @@ description = "Pull a Yahoo Fantasy NBA league's state into DuckDB from the comm
 requires-python = ">=3.11"
 dependencies = [
     "duckdb>=1.1",
+    "numpy>=1.26",
     "requests-oauthlib>=2.0",
     "typer>=0.12",
     "rich>=13.7",

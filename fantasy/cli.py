@@ -8,6 +8,8 @@ from rich.console import Console
 from rich.table import Table
 
 from . import config, pull as pull_mod, server as server_mod
+from .analysis import (matchup as matchup_mod, projection,
+                       rules as rules_mod, waiver as waiver_mod)
 from .store import db
 from .store.db import NoDatabase
 from .yahoo import auth
@@ -245,6 +247,201 @@ def view_cmd(
     finally:
         httpd.server_close()
         con.close()
+
+
+# --- analysis -----------------------------------------------------------
+
+def _pct(x) -> str:
+    return "-" if x is None else f"{100 * x:5.1f}%"
+
+
+def _bar(p: float, width: int = 12) -> str:
+    filled = int(round(p * width))
+    colour = "green" if p >= 0.55 else ("red" if p <= 0.45 else "yellow")
+    return f"[{colour}]{'#' * filled}[/{colour}][dim]{'.' * (width - filled)}[/dim]"
+
+
+def _assumptions(rules) -> None:
+    """
+    Print what the model had to assume, above the numbers it produced.
+
+    League rules can change and a snapshot will not notice, so this is repeated
+    on every run rather than left to the docs.
+    """
+    if not rules.assumed:
+        return
+    console.print("[dim]assuming " + ", ".join(f.brief() for f in rules.assumed)
+                  + " — see `fantasy rules`[/dim]")
+
+
+def _fmt(cat: dict, value) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.3f}" if cat.get("rate") else f"{value:.1f}"
+
+
+@app.command("rules")
+def rules_cmd():
+    """Show the league rules the model runs under, and what it had to assume."""
+    try:
+        with db.connect(read_only=True) as con:
+            r = rules_mod.load(con)
+    except (NoDatabase, RuntimeError) as exc:
+        fail(str(exc))
+
+    console.print(f"\n[bold]{r.name}[/bold]  [dim]{r.season} · {r.league_key}[/dim]\n")
+    render(
+        [(("[green]yahoo[/green]" if f.source == "yahoo" else "[yellow]assumed[/yellow]"),
+          f.label, f.value, f.note) for f in r.facts],
+        ["source", "rule", "value", "note"],
+    )
+    render(
+        [(c["label"], c["key"], c.get("stat_id", "-"),
+          "lower wins" if c.get("neg") else ("rate" if c.get("rate") else "counting"))
+         for c in r.categories],
+        ["category", "key", "yahoo id", "kind"],
+        title=f"{len(r.categories)} scored categories",
+    )
+    if r.assumed:
+        console.print("[dim]Assumed rules are not in the snapshot. `fantasy pull` "
+                      "refreshes what Yahoo does expose; the rest are tracked as "
+                      "known gaps in docs/ALGORITHMS.md.[/dim]")
+
+
+@app.command("matchup")
+def matchup_cmd(
+    opponent: str = typer.Argument(None, help="Opponent: team key, id, or part of a name. Omitted: the whole league."),
+    team: str = typer.Option(None, "--team", help="Team to analyse. Default: yours."),
+    sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
+    games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
+                                help="Average NBA games per team per week."),
+    periods: str = typer.Option(None, "--periods", help="Stat windows to blend. Default: all present."),
+    seed: int = typer.Option(0, "--seed", help="Random seed. Use different values to check stability."),
+):
+    """Category-by-category win probabilities against another team."""
+    window = [p.strip() for p in periods.split(",")] if periods else None
+    try:
+        with db.connect(read_only=True) as con:
+            if opponent is None:
+                report = matchup_mod.versus_field(con, team, window, sims, seed, games)
+                _render_field(report)
+            else:
+                report = matchup_mod.head_to_head(con, team, opponent, window, sims, seed, games)
+                _render_matchup(report)
+    except (NoDatabase, RuntimeError) as exc:
+        fail(str(exc))
+
+
+def _render_matchup(r: dict) -> None:
+    a, b = r["a"], r["b"]
+    console.print(f"\n[bold]{a['name']}[/bold] vs [bold]{b['name']}[/bold]  "
+                  f"[dim]{r['sims']:,} simulated weeks, {r['games_per_week']} games/team[/dim]")
+    _assumptions(r["rules"])
+    console.print()
+
+    rows = []
+    for cat in r["categories"]:
+        rows.append((
+            cat["label"],
+            _fmt(cat, cat["a_mean"]), _fmt(cat, cat["b_mean"]),
+            _pct(cat["p_win"]), _bar(cat["p_win"]),
+        ))
+    render(rows, ["cat", a["name"][:18], b["name"][:18], "win", ""])
+
+    console.print(
+        f"\nExpected score [bold]{r['expected_cats_won']:.1f}[/bold] of {len(r['categories'])} "
+        f"categories   |   matchup [green]{_pct(r['p_win']).strip()} win[/green], "
+        f"{_pct(r['p_tie']).strip()} tie, {_pct(r['p_loss']).strip()} loss"
+    )
+    spread = sorted(r["score_distribution"].items())
+    console.print("[dim]categories won: " +
+                  "  ".join(f"{k}:{100 * v:.0f}%" for k, v in spread if v >= 0.02) +
+                  "[/dim]")
+
+
+def _render_field(r: dict) -> None:
+    console.print(f"\n[bold]{r['a']['name']}[/bold] against the league  "
+                  f"[dim]{r['sims']:,} simulated weeks each[/dim]")
+    _assumptions(r["rules"])
+    console.print()
+    render(
+        [(c["label"], _pct(c["p_win"]), _bar(c["p_win"])) for c in r["categories"]],
+        ["cat", "win", ""], title="Average category odds",
+    )
+    render(
+        [(o["name"], f"{o['expected_cats_won']:.1f}", _pct(o["p_win"]), _bar(o["p_win"]))
+         for o in r["opponents"]],
+        ["opponent", "cats", "win", ""], title="Toughest matchups first",
+    )
+    console.print(f"\nAverage week: [bold]{r['expected_cats_won']:.1f}[/bold] categories, "
+                  f"[bold]{_pct(r['p_win']).strip()}[/bold] to win a random matchup")
+
+
+@app.command("waivers")
+def waivers_cmd(
+    versus: str = typer.Option(None, "--vs", help="Optimise against one opponent. Default: the whole league."),
+    team: str = typer.Option(None, "--team", help="Team to improve. Default: yours."),
+    top: int = typer.Option(12, "--top", help="Moves to show."),
+    drops: int = typer.Option(6, "--drops", help="How many of your players to consider dropping."),
+    sims: int = typer.Option(4000, "--sims", help="Simulated weeks."),
+    games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
+                                help="Average NBA games per team per week."),
+    min_gp: float = typer.Option(5.0, "--min-gp", help="Ignore free agents below this many games."),
+    periods: str = typer.Option(None, "--periods", help="Stat windows to blend. Default: all present."),
+    seed: int = typer.Option(0, "--seed", help="Random seed."),
+    by_player: bool = typer.Option(False, "--by-player",
+                                   help="One row per free agent, with their best drop."),
+):
+    """Simulate free-agent pickups and rank them by the odds they buy."""
+    window = [p.strip() for p in periods.split(",")] if periods else None
+    try:
+        with console.status("[cyan]simulating[/cyan]"):
+            with db.connect(read_only=True) as con:
+                r = waiver_mod.add_drop(con, team, versus, window, sims, seed,
+                                        games, drops, top, min_gp)
+    except (NoDatabase, RuntimeError) as exc:
+        fail(str(exc))
+
+    target = "the league" if len(r["opponents"]) > 1 else r["opponents"][0]["name"]
+    base = r["baseline"]
+    console.print(
+        f"\n[bold]{r['team']['name']}[/bold] vs {target}  "
+        f"[dim]{r['sims']:,} weeks, {r['considered']['free_agents']} free agents, "
+        f"{r['considered']['pairs']} legal swaps[/dim]"
+    )
+    console.print(f"Now: [bold]{base['expected_cats_won']:.2f}[/bold] categories, "
+                  f"[bold]{_pct(base['p_win']).strip()}[/bold] to win a week")
+    _assumptions(r["rules"])
+    console.print()
+
+    moves = r["best_by_player"] if by_player else r["moves"]
+    if not moves:
+        console.print("[yellow]No legal improving move found.[/yellow]")
+        return
+
+    rows = []
+    for m in moves:
+        gains = sorted(m["categories"].items(), key=lambda kv: -kv[1])
+        labels = {c["key"]: c["label"] for c in r["categories"]}
+        helps = ", ".join(f"{labels[k]} +{100 * v:.0f}" for k, v in gains[:3] if v > 0.01)
+        hurts = ", ".join(f"{labels[k]} {100 * v:.0f}" for k, v in gains[-2:] if v < -0.01)
+        sign = "+" if m["delta_cats"] >= 0 else ""
+        rows.append((
+            f"{m['add']['name']} ({'/'.join(m['add']['positions'])})",
+            m["drop"]["name"],
+            f"{sign}{m['delta_cats']:.2f}",
+            f"{sign}{100 * m['delta_p_win']:.1f}pp",
+            helps or "-",
+            hurts or "-",
+        ))
+    render(rows, ["add", "drop", "cats", "win%", "gains (pp)", "costs (pp)"])
+    console.print("[dim]cats = change in expected categories won per week; "
+                  "win% = change in the odds of winning the matchup[/dim]")
+
+    render([(d["name"], "/".join(d["positions"]), d["slot"] or "", f"{d['cost']:.2f}")
+            for d in r["drop_candidates"]],
+           ["droppable", "pos", "slot", "cost (cats)"],
+           title="Cheapest to drop")
 
 
 @app.command("sql")
