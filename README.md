@@ -73,6 +73,8 @@ fantasy report                       # one standing report, for you or an agent
 | `fantasy rankings sources` | List the ranking sites this app knows how to scrape. |
 | `fantasy rankings pull SOURCE` | Scrape a ranking site and append it to the database. |
 | `fantasy rankings show SOURCE` | Show the latest pull for a ranking source. |
+| `fantasy schedule pull [SEASON]` | Fetch the NBA game schedule and append it to the database. |
+| `fantasy schedule show` | Show the latest pulled schedule, optionally filtered by team. |
 
 `pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
 `--fa-limit N` (cap the free-agent pool; default is the whole pool).
@@ -128,11 +130,11 @@ player). `fantasy rankings pull` reports how many rows matched; the rest are typ
 players outside your league's snapshot rather than a matching bug.
 
 A source is a pure `parse(html) -> list[dict]` function registered in
-`fantasy/sources/__init__.py`; the network fetch is shared. Add a new site by writing
-one module next to `fantasy/sources/hashtagbasketball.py` and registering it — nothing
-else changes. Because each parser reads one site's actual template, it is scrape code
-tied to a specific site's markup, not a generic table scraper — expect it to need a
-one-file fix if that site redesigns its rankings page.
+`fantasy/sources/rankings/__init__.py`; the network fetch is shared. Add a new site by
+writing one module next to `fantasy/sources/rankings/hashtagbasketball.py` and
+registering it — nothing else changes. Because each parser reads one site's actual
+template, it is scrape code tied to a specific site's markup, not a generic table
+scraper — expect it to need a one-file fix if that site redesigns its rankings page.
 
 ```sql
 -- Rankings joined against your roster
@@ -142,6 +144,36 @@ LEFT JOIN v_roster_players p USING (player_key)
 WHERE r.source = 'hashtag_dynasty'
 ORDER BY r.rank
 LIMIT 20;
+```
+
+## NBA schedule
+
+Independent of the Yahoo snapshot, `fantasy schedule` fetches the league-wide game
+schedule (via [nba_api](https://github.com/swar/nba_api), stats.nba.com's own
+`ScheduleLeagueV2` endpoint) and appends it to DuckDB on its own history — the
+`(date, nba_team)` datasource `docs/ALGORITHMS.md` names as the model's single biggest
+open gap: today `--games` is a flat league-wide guess, because nothing in the store
+knows how many games each team actually plays in a given week.
+
+```sh
+fantasy schedule pull            # season inferred from today's date
+fantasy schedule pull 2026-27    # or pull a specific season explicitly
+fantasy schedule show --team BOS
+```
+
+Team columns are Yahoo-style tricodes (`BOS`, `GSW`, ...), so the schedule joins
+straight onto `players.editorial_team_abbr` with no lookup table. Preseason games are
+dropped, as are Emirates NBA Cup semifinal/final placeholders before the group stage
+that decides them has been played — those show up once a re-pull happens after the
+teams are known. This is ingestion only: nothing in `analysis/` reads it yet, so
+`--games` still defaults to 3.5 until `projection.py` is wired up to use it.
+
+```sql
+-- Real games per NBA team for a date range (a fantasy week, say)
+SELECT nba_team, count(*) AS games
+FROM v_nba_team_schedule
+WHERE game_date BETWEEN '2026-11-02' AND '2026-11-08'
+GROUP BY 1 ORDER BY 2 DESC;
 ```
 
 ## Schema
@@ -176,6 +208,17 @@ Ranking tables, on their own pull sequence (not tied to a `league_key`):
 | `player_rankings` | One row per (source, player): rank, name, team, positions, age, `player_key` if matched, and source-specific fields as JSON in `extra`. |
 
 `v_player_rankings` resolves to the latest successful pull per source.
+
+NBA schedule tables, on their own pull sequence (keyed by `season`, not `league_key`):
+
+| Table | Contents |
+|---|---|
+| `nba_schedule_pulls` | One row per `fantasy schedule pull`: season, timestamp, status. |
+| `nba_schedule` | One row per game: date, home/away team tricode, cup/exhibition label. |
+
+`v_nba_schedule` resolves to the latest successful pull per season; `v_nba_team_schedule`
+unpivots it to one row per (team, game) — the join surface for counting a team's games in
+a date range.
 
 ## Analysis
 
@@ -337,6 +380,7 @@ fantasy/
 ├── query.py          # read-side queries over the latest snapshot
 ├── rankings.py       # scrape a ranking site, match players, append to DuckDB
 ├── report.py         # composes the whole picture into one markdown document
+├── schedule.py       # fetch the NBA game schedule, append to DuckDB
 ├── server.py         # local JSON API + app host
 ├── analysis/
 │   ├── rules.py      # league rules read from the snapshot; refuses what it can't model
@@ -344,9 +388,14 @@ fantasy/
 │   ├── simulate.py   # Monte Carlo engine, one column per player
 │   ├── matchup.py    # head-to-head and against-the-field odds
 │   └── waiver.py     # free-agent add/drop search
-├── sources/
-│   ├── fetch.py             # shared HTTP GET for ranking sites
-│   └── hashtagbasketball.py # pure HTML → rows parser, one file per site
+├── sources/          # everything pulled in besides your Yahoo league
+│   ├── rankings/
+│   │   ├── fetch.py             # shared HTTP GET for ranking sites
+│   │   ├── hashtagbasketball.py # pure HTML → rows parser, one file per site
+│   │   └── dynatyze.py          # pure JSON-LD → rows parser
+│   └── schedule/
+│       ├── client.py # fetch the schedule from stats.nba.com (via nba_api)
+│       └── parse.py  # raw payload → flat rows (pure functions)
 ├── templates/
 │   └── app.html      # the interface
 ├── yahoo/
@@ -364,14 +413,18 @@ docs/
 `tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures,
 `tests/test_analysis.py` the simulation math against hand-built players,
 `tests/test_report.py` the report's formatting and derivations against a fixture
-document, and `tests/test_rankings.py` the ranking-site scraper against saved HTML
-fixtures. None touches the network or the database:
+document, `tests/test_rankings.py` and `tests/test_dynatyze.py` each ranking-site
+scraper against a saved fixture of that site's real markup, and `tests/test_schedule.py`
+the schedule parser against a ScheduleLeagueV2-shaped fixture. None touches the
+network or the database:
 
 ```sh
 .venv/bin/python tests/test_parse.py
 .venv/bin/python tests/test_analysis.py
 .venv/bin/python tests/test_report.py
 .venv/bin/python tests/test_rankings.py
+.venv/bin/python tests/test_dynatyze.py
+.venv/bin/python tests/test_schedule.py
 ```
 
 ## Notes

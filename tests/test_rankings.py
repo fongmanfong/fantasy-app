@@ -2,7 +2,7 @@
 The ranking-site scraper, with no network.
 
 The fixture mirrors HashtagBasketball's actual card markup (see
-fantasy/sources/hashtagbasketball.py), including two edge cases pulled from a real
+fantasy/sources/rankings/hashtagbasketball.py), including two edge cases pulled from a real
 pull that used to silently drop rows: a player with no position badge, and a player
 whose "Keeper Value" span is present but empty.
 """
@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fantasy.sources.hashtagbasketball import parse_dynasty
+from fantasy.sources.rankings.hashtagbasketball import parse_dynasty
 
 failures = []
 

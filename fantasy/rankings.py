@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 
 from .names import normalize
-from .sources import SOURCES, fetch
+from .sources.rankings import SOURCES, fetch
 from .store import db
 
 logger = logging.getLogger(__name__)

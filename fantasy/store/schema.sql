@@ -256,3 +256,51 @@ GROUP BY source;
 
 CREATE OR REPLACE VIEW v_player_rankings AS
 SELECT r.* FROM player_rankings r JOIN latest_ranking_pull p USING (source, ranking_pull_id);
+
+-- --- NBA schedule ---
+--
+-- A separate append-only source from the Yahoo pulls above: nba.com's own
+-- schedule, keyed by NBA season rather than league_key. Same accumulate-history
+-- shape as `pulls`/`leagues` — nothing UPDATEd or DELETEd, v_nba_schedule
+-- resolves to the newest successful pull per season.
+
+CREATE SEQUENCE IF NOT EXISTS nba_schedule_pull_id_seq START 1;
+
+CREATE TABLE IF NOT EXISTS nba_schedule_pulls (
+    pull_id    BIGINT PRIMARY KEY,
+    season     VARCHAR NOT NULL,      -- e.g. '2026-27'
+    pulled_at  TIMESTAMP NOT NULL,
+    status     VARCHAR NOT NULL,      -- running | success | error
+    note       VARCHAR
+);
+
+-- One row per game. Team columns are Yahoo-style tricodes (TOR, GSW, ...) so
+-- this joins straight onto players.editorial_team_abbr with no lookup table.
+CREATE TABLE IF NOT EXISTS nba_schedule (
+    pull_id         BIGINT NOT NULL,
+    season          VARCHAR NOT NULL,
+    game_id         VARCHAR,
+    game_date       DATE,
+    home_team       VARCHAR,
+    away_team       VARCHAR,
+    game_label      VARCHAR,          -- NULL for a normal game; else e.g. 'Emirates NBA Cup'
+    is_neutral_site BOOLEAN
+);
+
+CREATE OR REPLACE VIEW latest_nba_schedule_pull AS
+SELECT season, max(pull_id) AS pull_id
+FROM nba_schedule_pulls
+WHERE status = 'success'
+GROUP BY season;
+
+CREATE OR REPLACE VIEW v_nba_schedule AS
+SELECT s.* FROM nba_schedule s JOIN latest_nba_schedule_pull p USING (season, pull_id);
+
+-- One row per (team, game) instead of per game — the join surface
+-- projection.py needs to count real games per NBA team per week.
+CREATE OR REPLACE VIEW v_nba_team_schedule AS
+SELECT season, game_id, game_date, home_team AS nba_team, away_team AS opponent, true AS is_home, game_label
+FROM v_nba_schedule
+UNION ALL
+SELECT season, game_id, game_date, away_team AS nba_team, home_team AS opponent, false AS is_home, game_label
+FROM v_nba_schedule;
