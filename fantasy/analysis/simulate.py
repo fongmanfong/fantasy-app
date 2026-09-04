@@ -29,9 +29,16 @@ from .projection import (ATTEMPT_CV, COUNTING, RATE_PAIRS, SCHEDULE_SLOTS,
 # have in a player's percentage. Lower means streakier.
 SHOOTING_ESS = 400.0
 
-CATEGORY_KEYS = COUNTING + list(RATE_PAIRS)
-# Turnovers are the one category where less wins.
-NEGATIVE = {"tov"}
+# Which categories are scored, and which of them invert, is a property of the
+# league rather than of this module — see `fantasy.analysis.rules`. Every
+# comparison below takes that list explicitly rather than assuming the nine
+# standard categories.
+SIMULATED_KEYS = COUNTING + list(RATE_PAIRS)
+
+
+def _scored(categories: list[dict]) -> tuple[list[str], set[str]]:
+    return ([c["key"] for c in categories],
+            {c["key"] for c in categories if c.get("neg")})
 
 
 @dataclass
@@ -133,12 +140,13 @@ def swap(week: dict[str, np.ndarray], draws: Draws,
     return out
 
 
-def category_probs(a: dict, b: dict) -> dict[str, dict]:
+def category_probs(a: dict, b: dict, categories: list[dict]) -> dict[str, dict]:
     """Win/tie/loss probability per category for lineup `a` against `b`."""
+    keys, negative = _scored(categories)
     out = {}
-    for cat in CATEGORY_KEYS:
+    for cat in keys:
         va, vb = a[cat], b[cat]
-        wins = (va < vb) if cat in NEGATIVE else (va > vb)
+        wins = (va < vb) if cat in negative else (va > vb)
         ties = va == vb
         out[cat] = {
             "p_win": float(wins.mean()),
@@ -150,20 +158,21 @@ def category_probs(a: dict, b: dict) -> dict[str, dict]:
     return out
 
 
-def cats_won(a: dict, b: dict) -> np.ndarray:
-    """Categories won per simulation — the head-to-head score, 0 to 9."""
-    total = np.zeros(len(a[CATEGORY_KEYS[0]]), dtype=np.float32)
-    for cat in CATEGORY_KEYS:
+def cats_won(a: dict, b: dict, categories: list[dict]) -> np.ndarray:
+    """Categories won per simulation — the head-to-head score."""
+    keys, negative = _scored(categories)
+    total = np.zeros(len(a[keys[0]]), dtype=np.float32)
+    for cat in keys:
         va, vb = a[cat], b[cat]
-        total += ((va < vb) if cat in NEGATIVE else (va > vb))
+        total += ((va < vb) if cat in negative else (va > vb))
     return total
 
 
-def matchup_summary(a: dict, b: dict) -> dict:
+def matchup_summary(a: dict, b: dict, categories: list[dict]) -> dict:
     """Expected score and win probability for one head-to-head week."""
-    won = cats_won(a, b)
-    lost = cats_won(b, a)
-    n = len(CATEGORY_KEYS)
+    won = cats_won(a, b, categories)
+    lost = cats_won(b, a, categories)
+    n = len(categories)
     return {
         "expected_cats_won": float(won.mean()),
         "p_win": float((won > lost).mean()),

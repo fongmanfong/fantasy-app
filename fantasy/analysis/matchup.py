@@ -7,10 +7,7 @@ is the right question when nobody is asking about a specific matchup.
 """
 import numpy as np
 
-from ..query import CATEGORIES
-from . import projection, simulate
-
-LABELS = {c["key"]: c for c in CATEGORIES}
+from . import projection, rules as rules_mod, simulate
 
 
 def resolve_team(con, needle: str | None) -> dict:
@@ -54,10 +51,16 @@ def resolve_team(con, needle: str | None) -> dict:
 
 def prepare(con, periods=None, sims: int = 10000, seed: int | None = 0,
             games_per_week: float = projection.GAMES_PER_WEEK):
-    """Project and simulate every player once, for reuse across comparisons."""
+    """
+    Read the league rules, then project and simulate every player once.
+
+    Rules come first: a league the model cannot represent should fail before
+    any work is done, not after a plausible-looking table has been printed.
+    """
+    rules = rules_mod.load(con, games_per_week=games_per_week)
     players = projection.build(con, periods=periods, games_per_week=games_per_week)
     draws = simulate.draw(players, sims=sims, seed=seed)
-    return players, draws
+    return players, draws, rules
 
 
 def lineup_columns(draws, players, team_key: str) -> np.ndarray:
@@ -69,12 +72,8 @@ def lineup_columns(draws, players, team_key: str) -> np.ndarray:
     return draws.columns(keys)
 
 
-def _category_rows(probs: dict) -> list[dict]:
-    rows = []
-    for cat in CATEGORIES:
-        k = cat["key"]
-        rows.append({**cat, **probs[k]})
-    return rows
+def _category_rows(probs: dict, categories: list[dict]) -> list[dict]:
+    return [{**cat, **probs[cat["key"]]} for cat in categories]
 
 
 def head_to_head(con, team_a: str | None = None, team_b: str | None = None,
@@ -91,15 +90,16 @@ def head_to_head(con, team_a: str | None = None, team_b: str | None = None,
     if a["team_key"] == b["team_key"]:
         raise RuntimeError("A team cannot be benchmarked against itself.")
 
-    players, draws = prepare(con, periods, sims, seed, games_per_week)
+    players, draws, rules = prepare(con, periods, sims, seed, games_per_week)
+    cats = rules.categories
     ca = lineup_columns(draws, players, a["team_key"])
     cb = lineup_columns(draws, players, b["team_key"])
     wa, wb = simulate.team_week(draws, ca), simulate.team_week(draws, cb)
 
     return {
-        "a": a, "b": b,
-        "categories": _category_rows(simulate.category_probs(wa, wb)),
-        **simulate.matchup_summary(wa, wb),
+        "a": a, "b": b, "rules": rules,
+        "categories": _category_rows(simulate.category_probs(wa, wb, cats), cats),
+        **simulate.matchup_summary(wa, wb, cats),
         "sims": sims, "games_per_week": games_per_week,
         "roster_size": {a["team_key"]: len(ca), b["team_key"]: len(cb)},
     }
@@ -110,16 +110,17 @@ def versus_field(con, team_a: str | None = None, periods=None, sims: int = 10000
                  games_per_week: float = projection.GAMES_PER_WEEK) -> dict:
     """One team's week run against every other team in the league."""
     a = resolve_team(con, team_a)
-    players, draws = prepare(con, periods, sims, seed, games_per_week)
+    players, draws, rules = prepare(con, periods, sims, seed, games_per_week)
+    cats = rules.categories
     wa = simulate.team_week(draws, lineup_columns(draws, players, a["team_key"]))
 
     names = dict(con.execute("select team_key, name from v_teams").fetchall())
     opponents = [t for t in projection.by_team(players) if t != a["team_key"]]
-    rows, per_cat = [], {c["key"]: [] for c in CATEGORIES}
+    rows, per_cat = [], {c["key"]: [] for c in cats}
     for opp in opponents:
         wb = simulate.team_week(draws, lineup_columns(draws, players, opp))
-        probs = simulate.category_probs(wa, wb)
-        summary = simulate.matchup_summary(wa, wb)
+        probs = simulate.category_probs(wa, wb, cats)
+        summary = simulate.matchup_summary(wa, wb, cats)
         rows.append({"team_key": opp, "name": names.get(opp),
                      **{k: summary[k] for k in
                         ("expected_cats_won", "p_win", "p_tie", "p_loss")}})
@@ -128,10 +129,10 @@ def versus_field(con, team_a: str | None = None, periods=None, sims: int = 10000
     rows.sort(key=lambda r: r["p_win"])
 
     return {
-        "a": a,
+        "a": a, "rules": rules,
         "opponents": rows,
         "categories": [{**c, "p_win": float(np.mean(per_cat[c["key"]]))}
-                       for c in CATEGORIES],
+                       for c in cats],
         "expected_cats_won": float(np.mean([r["expected_cats_won"] for r in rows])),
         "p_win": float(np.mean([r["p_win"] for r in rows])),
         "sims": sims, "games_per_week": games_per_week,

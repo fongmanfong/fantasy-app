@@ -8,7 +8,8 @@ from rich.console import Console
 from rich.table import Table
 
 from . import config, pull as pull_mod, server as server_mod
-from .analysis import matchup as matchup_mod, projection, waiver as waiver_mod
+from .analysis import (matchup as matchup_mod, projection,
+                       rules as rules_mod, waiver as waiver_mod)
 from .store import db
 from .store.db import NoDatabase
 from .yahoo import auth
@@ -260,10 +261,51 @@ def _bar(p: float, width: int = 12) -> str:
     return f"[{colour}]{'#' * filled}[/{colour}][dim]{'.' * (width - filled)}[/dim]"
 
 
+def _assumptions(rules) -> None:
+    """
+    Print what the model had to assume, above the numbers it produced.
+
+    League rules can change and a snapshot will not notice, so this is repeated
+    on every run rather than left to the docs.
+    """
+    if not rules.assumed:
+        return
+    console.print("[dim]assuming " + ", ".join(f.brief() for f in rules.assumed)
+                  + " — see `fantasy rules`[/dim]")
+
+
 def _fmt(cat: dict, value) -> str:
     if value is None:
         return "-"
     return f"{value:.3f}" if cat.get("rate") else f"{value:.1f}"
+
+
+@app.command("rules")
+def rules_cmd():
+    """Show the league rules the model runs under, and what it had to assume."""
+    try:
+        with db.connect(read_only=True) as con:
+            r = rules_mod.load(con)
+    except (NoDatabase, RuntimeError) as exc:
+        fail(str(exc))
+
+    console.print(f"\n[bold]{r.name}[/bold]  [dim]{r.season} · {r.league_key}[/dim]\n")
+    render(
+        [(("[green]yahoo[/green]" if f.source == "yahoo" else "[yellow]assumed[/yellow]"),
+          f.label, f.value, f.note) for f in r.facts],
+        ["source", "rule", "value", "note"],
+    )
+    render(
+        [(c["label"], c["key"], c.get("stat_id", "-"),
+          "lower wins" if c.get("neg") else ("rate" if c.get("rate") else "counting"))
+         for c in r.categories],
+        ["category", "key", "yahoo id", "kind"],
+        title=f"{len(r.categories)} scored categories",
+    )
+    if r.assumed:
+        console.print("[dim]Assumed rules are not in the snapshot. `fantasy pull` "
+                      "refreshes what Yahoo does expose; the rest are tracked as "
+                      "known gaps in docs/ALGORITHMS.md.[/dim]")
 
 
 @app.command("matchup")
@@ -293,7 +335,9 @@ def matchup_cmd(
 def _render_matchup(r: dict) -> None:
     a, b = r["a"], r["b"]
     console.print(f"\n[bold]{a['name']}[/bold] vs [bold]{b['name']}[/bold]  "
-                  f"[dim]{r['sims']:,} simulated weeks, {r['games_per_week']} games/team[/dim]\n")
+                  f"[dim]{r['sims']:,} simulated weeks, {r['games_per_week']} games/team[/dim]")
+    _assumptions(r["rules"])
+    console.print()
 
     rows = []
     for cat in r["categories"]:
@@ -317,7 +361,9 @@ def _render_matchup(r: dict) -> None:
 
 def _render_field(r: dict) -> None:
     console.print(f"\n[bold]{r['a']['name']}[/bold] against the league  "
-                  f"[dim]{r['sims']:,} simulated weeks each[/dim]\n")
+                  f"[dim]{r['sims']:,} simulated weeks each[/dim]")
+    _assumptions(r["rules"])
+    console.print()
     render(
         [(c["label"], _pct(c["p_win"]), _bar(c["p_win"])) for c in r["categories"]],
         ["cat", "win", ""], title="Average category odds",
@@ -364,7 +410,9 @@ def waivers_cmd(
         f"{r['considered']['pairs']} legal swaps[/dim]"
     )
     console.print(f"Now: [bold]{base['expected_cats_won']:.2f}[/bold] categories, "
-                  f"[bold]{_pct(base['p_win']).strip()}[/bold] to win a week\n")
+                  f"[bold]{_pct(base['p_win']).strip()}[/bold] to win a week")
+    _assumptions(r["rules"])
+    console.print()
 
     moves = r["best_by_player"] if by_player else r["moves"]
     if not moves:

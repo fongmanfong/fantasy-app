@@ -12,7 +12,6 @@ by what the team loses without them, and only the cheapest are offered up.
 """
 import numpy as np
 
-from ..query import CATEGORIES
 from . import matchup, projection, simulate
 
 # Slots a player can fill beyond their listed positions.
@@ -68,17 +67,18 @@ def fills_lineup(players: list, slots: list[set | None]) -> bool:
 class Scorer:
     """Scores a candidate week against a fixed set of opponents."""
 
-    def __init__(self, opponent_weeks: list[dict]):
+    def __init__(self, opponent_weeks: list[dict], categories: list[dict]):
         self.n = len(opponent_weeks)
+        self.categories = categories
         self.opp = {c["key"]: np.stack([w[c["key"]] for w in opponent_weeks])
-                    for c in CATEGORIES}
+                    for c in categories}
 
     def __call__(self, week: dict) -> tuple[float, float, dict]:
         """Returns (expected categories won, win probability, per-category odds)."""
         won = np.zeros_like(next(iter(self.opp.values())))
         lost = np.zeros_like(won)
         per_cat = {}
-        for cat in CATEGORIES:
+        for cat in self.categories:
             k = cat["key"]
             va, vb = week[k], self.opp[k]
             gt, lt = va > vb, va < vb
@@ -109,7 +109,7 @@ def add_drop(con, team: str | None = None, opponent: str | None = None,
     me = matchup.resolve_team(con, team)
     my_key = me["team_key"]
 
-    players, draws = matchup.prepare(con, periods, sims, seed, games_per_week)
+    players, draws, rules = matchup.prepare(con, periods, sims, seed, games_per_week)
     rostered = projection.by_team(players)
     if my_key not in rostered:
         raise RuntimeError(f"No rostered players found for {me['name']}.")
@@ -125,7 +125,7 @@ def add_drop(con, team: str | None = None, opponent: str | None = None,
         raise RuntimeError("No opponents to measure against.")
     score = Scorer([
         simulate.team_week(draws, matchup.lineup_columns(draws, players, o["team_key"]))
-        for o in opponents])
+        for o in opponents], rules.categories)
 
     base_cats, base_win, base_per_cat = score(baseline_week)
 
@@ -167,7 +167,7 @@ def add_drop(con, team: str | None = None, opponent: str | None = None,
         best_per_add.setdefault(r["add"]["player_key"], r)
 
     return {
-        "team": me,
+        "team": me, "rules": rules,
         "opponents": [{"team_key": o["team_key"], "name": o["name"]}
                       for o in opponents],
         "baseline": {"expected_cats_won": base_cats, "p_win": base_win,
@@ -178,5 +178,5 @@ def add_drop(con, team: str | None = None, opponent: str | None = None,
         "drop_candidates": [{**_describe(p), "cost": v} for v, p in drops],
         "considered": {"free_agents": len(candidates), "pairs": len(results)},
         "sims": sims, "games_per_week": games_per_week,
-        "categories": CATEGORIES,
+        "categories": rules.categories,
     }

@@ -10,15 +10,63 @@ to say who plays four times next week. Both gaps are filled with explicit,
 documented parameters rather than hidden defaults, and both are listed under
 [Limitations](#limitations).
 
-The pipeline is five stages:
+The pipeline is five stages, preceded by a rules check:
 
 | Stage | Module | Produces |
 |---|---|---|
+| 0. League rules | `rules.py` | what is scored, and what had to be assumed |
 | 1. Rate estimation | `projection.py` | a per-game mean for each category |
 | 2. Availability | `projection.py` | the chance a player appears in a given game |
 | 3. Week simulation | `simulate.py` | `sims` weekly totals per player |
 | 4. Matchup scoring | `simulate.py`, `matchup.py` | win probability per category |
 | 5. Waiver search | `waiver.py` | ranked add/drops |
+
+---
+
+## 0. League rules
+
+`rules.load` ([rules.py](../fantasy/analysis/rules.py))
+
+Every run starts here, before any simulation, because a league the model cannot
+represent should fail before it prints a plausible-looking table rather than
+after. Rules are re-derived from the snapshot on each run, so a settings change
+or a second league is picked up automatically — nothing about the league is
+baked into the code.
+
+**Read from the snapshot:**
+
+- **Which categories are scored**, from `v_stat_categories`, filtering rows
+  flagged `is_only_display` (Yahoo lists `FGM/A` and `FTM/A` as display-only).
+  The mapping is keyed on Yahoo's **`stat_id`**, never the stored name —
+  snapshots taken before the stat-map fix have makes and attempts transposed,
+  so `stat_id` is the only stable identifier.
+- **Which category inverts**, from `sort_order` (`0` means a lower number wins).
+  Snapshots that predate storing it fall back to turnovers, and say so.
+- **Roster slots**, from `v_roster_positions`.
+
+**Refused rather than approximated:**
+
+- A league that is not head-to-head categories. Scoring a week by category wins
+  is meaningless in a points or rotisserie league, so `scoring_type != "head"`
+  raises.
+- A league scoring anything the simulator has no quantity for — double-doubles,
+  A/T ratio, minutes. Every scored category has to be simulated for the
+  majority threshold to mean anything, so a partial answer would be a wrong
+  answer.
+
+**Assumed, and printed above every result:**
+
+| Assumption | Why it is not in the snapshot |
+|---|---|
+| daily lineups | Yahoo's roster-change frequency is not pulled |
+| perfect management | an idealisation, not a setting |
+| 3.5 games per team | no NBA schedule |
+| unlimited adds | max acquisitions are not pulled |
+
+`fantasy rules` prints the whole table with sources and notes. The one-line
+version appears above every matchup and waiver run — league rules change, and a
+snapshot will not notice, so the assumptions are repeated rather than left in
+this document.
 
 ---
 
@@ -266,7 +314,10 @@ category is the column-wise sum over its players; percentages are pooled as
 described above.
 
 A category is won on a straight elementwise comparison across simulations, with
-turnovers inverted (`NEGATIVE = {"tov"}`):
+the inverted category (turnovers, in a standard league) flipped. Which
+categories are compared, and which of them invert, comes from stage 0 — every
+comparison function takes the league's category list explicitly rather than
+assuming the standard nine:
 
 ```
     p_win(category) = mean( a > b )        or mean( a < b ) for TO
@@ -277,7 +328,7 @@ exactly. Because the draws are continuous, exact ties are vanishingly rare
 outside the degenerate case of a team against itself — but the accounting stays
 honest rather than quietly awarding half a category.
 
-The matchup itself is the 9-category majority:
+The matchup itself is the majority across whatever the league scores:
 
 ```
     won  = Σ over categories of  1[a beats b]
@@ -413,10 +464,14 @@ Roughly in order of how much they cost:
 4. **Players are independent.** Two players on the same NBA team, or on either
    side of the same real game, are drawn independently. This understates the
    variance of a stacked roster.
-5. **Daily lineup management is ignored.** Every non-IL player accrues every
-   game they play. In a league with 11 active slots and ~14 healthy players the
-   cap almost never binds, but it does mean the model cannot reward good
-   day-to-day streaming or punish neglect.
+5. **Daily lineups are assumed, and assumed to be played perfectly.** Every
+   non-IL player accrues every game they play — the daily-league assumption,
+   surfaced by `rules.py` on every run because the snapshot cannot confirm it.
+   A weekly-locked league would count only its 11 starters and is not
+   supported. Even within a daily league this models the *ceiling*: the 11-slot
+   cap binds on about 0.65% of nights (~0.1% of production, so negligible), but
+   assuming perfect streaming favours deep rosters over top-heavy ones relative
+   to what a real manager achieves.
 6. **The drop-pricing pass measures a short roster**, not a replacement-level
    fill. It is a shortlist, not a valuation.
 7. **No FAAB, waiver priority, or trade logic.** A recommended add is assumed
@@ -439,11 +494,12 @@ Everything tunable, in one place:
 | `AVAILABILITY` | [projection.py:46](../fantasy/analysis/projection.py) | play probability by injury status |
 | `GAMES_PER_WEEK` | [projection.py:51](../fantasy/analysis/projection.py) | league-average games (also `--games`) |
 | `SHOOTING_ESS` | [simulate.py:30](../fantasy/analysis/simulate.py) | how streaky shooting percentages are |
-| `NEGATIVE` | [simulate.py:34](../fantasy/analysis/simulate.py) | categories where low wins |
 | `FLEX` | [waiver.py:19](../fantasy/analysis/waiver.py) | which positions a flex slot accepts |
+| `SIMULATED` | [rules.py](../fantasy/analysis/rules.py) | Yahoo stat ids the model can score |
 
-Category definitions themselves — labels, display order, the `neg` and `rate`
-flags — live in `query.CATEGORIES` and are shared with the web interface.
+Which categories a league scores, and which invert, are **not** parameters —
+they are read from the snapshot by `rules.py`. `query.CATEGORIES` supplies only
+display order and the `rate` flag, shared with the web interface.
 
 `tests/test_analysis.py` pins the behaviour each of these affects, so a
 recalibration that breaks an invariant shows up immediately.

@@ -49,6 +49,7 @@ fantasy pull                         # snapshot your league (or pass a league ke
 fantasy pull 466.l.28641 --skip-stats
 fantasy sql "select * from v_my_team"
 fantasy view                         # open the league interface in your browser
+fantasy rules                        # what the model reads, and what it assumes
 fantasy matchup "Guan Yu"            # your odds in each category against them
 fantasy waivers                      # free-agent pickups ranked by odds bought
 ```
@@ -63,6 +64,7 @@ fantasy waivers                      # free-agent pickups ranked by odds bought
 | `fantasy pulls` | List past pulls with status and timestamps. |
 | `fantasy tables` | Every table and view with row counts. |
 | `fantasy view` | Launch the league interface in your browser. |
+| `fantasy rules` | League rules the model runs under, and what it had to assume. |
 | `fantasy matchup [TEAM]` | Win probability per category against a team, or the whole league. |
 | `fantasy waivers` | Rank free-agent add/drops by how much they move the odds. |
 | `fantasy sql "<query>"` | Run ad-hoc SQL. |
@@ -257,6 +259,7 @@ fantasy/
 ├── query.py          # read-side queries over the latest snapshot
 ├── server.py         # local JSON API + app host
 ├── analysis/
+│   ├── rules.py      # league rules read from the snapshot; refuses what it can't model
 │   ├── projection.py # player -> weekly rates, variance, availability
 │   ├── simulate.py   # Monte Carlo engine, one column per player
 │   ├── matchup.py    # head-to-head and against-the-field odds
