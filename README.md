@@ -52,7 +52,7 @@ fantasy view                         # open the league interface in your browser
 fantasy rules                        # what the model reads, and what it assumes
 fantasy matchup "Guan Yu"            # your odds in each category against them
 fantasy waivers                      # free-agent pickups ranked by odds bought
-fantasy report > week.md             # one standing report, for you or an agent
+fantasy report                       # one standing report, for you or an agent
 ```
 
 | Command | Description |
@@ -179,9 +179,14 @@ else's roster), `--periods` (which stat windows to blend), and `--games`
 ### The report
 
 ```sh
-fantasy report                  # to stdout
-fantasy report --out week.md    # to a file
+fantasy report                    # writes reports/2025-W23.md
+fantasy report --out -            # to stdout instead
+fantasy report --out week.md      # somewhere specific
 ```
+
+Reports land in `reports/`, one file per league week and overwritten within it,
+so successive runs build a series you can diff to see what actually changed on
+your roster and in the league. The directory is gitignored.
 
 `fantasy report` composes the whole picture into one markdown document: your
 roster, your category profile against the league, the standings, the waiver
@@ -196,8 +201,8 @@ assumptions behind it, and the front-matter carries `report_version` plus
 machine-readable `data_quality` codes so a reader can branch on what is wrong
 with the snapshot without parsing prose.
 
-Output goes to stdout so it pipes; progress and errors go to stderr, so a
-redirect always yields a clean document.
+Progress and errors go to stderr, so `fantasy report --out - > week.md` yields a
+clean document.
 
 ### The model
 

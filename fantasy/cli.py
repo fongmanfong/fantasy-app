@@ -449,7 +449,8 @@ def waivers_cmd(
 @app.command("report")
 def report_cmd(
     team: str = typer.Option(None, "--team", help="Team to report on. Default: yours."),
-    out: Path = typer.Option(None, "--out", help="Write to a file. Default: stdout."),
+    out: str = typer.Option(None, "--out", help="Where to write. Default: "
+                            "reports/<season>-W<week>.md. Use - for stdout."),
     sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
     games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
                                 help="Average NBA games per team per week."),
@@ -460,8 +461,10 @@ def report_cmd(
     """
     Write a standing report on the league, for a person or an agent to read.
 
-    Goes to stdout so it pipes; `--out` writes a file. Progress and errors go to
-    stderr, so `fantasy report > week.md` gives a clean document either way.
+    Writes `reports/<season>-W<week>.md` by default — one file per league week,
+    so successive runs build a series you can diff. `--out -` sends it to stdout
+    instead. Progress and errors go to stderr either way, so a redirect always
+    yields a clean document.
     """
     try:
         # The spinner must not touch stdout — `console` is bound to it, and a
@@ -474,21 +477,23 @@ def report_cmd(
     except (NoDatabase, RuntimeError) as exc:
         fail(str(exc))
 
-    if out:
-        # Create the directory rather than throwing away a simulation that
-        # already ran, and report a write failure the way every other command
-        # reports one instead of unwinding a traceback over the report.
-        try:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(text)
-        except OSError as exc:
-            fail(f"could not write {out}: {exc}")
-        err.print(f"[green]Wrote[/green] {out} "
-                  f"[dim]({len(text.splitlines()):,} lines)[/dim]")
-    else:
+    if out == "-":
         # Deliberately not console.print: rich would wrap the tables to terminal
         # width, parse [...] as markup and syntax-highlight the result.
         sys.stdout.write(text)
+        return
+
+    path = Path(out) if out else report_mod.default_path(data)
+    # Create the directory rather than throwing away a simulation that already
+    # ran, and report a write failure the way every other command reports one
+    # instead of unwinding a traceback over the report.
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    except OSError as exc:
+        fail(f"could not write {path}: {exc}")
+    err.print(f"[green]Wrote[/green] {path} "
+              f"[dim]({len(text.splitlines()):,} lines)[/dim]")
 
 
 @app.command("sql")

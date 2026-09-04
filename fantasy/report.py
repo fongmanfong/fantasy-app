@@ -24,6 +24,7 @@ will quietly contradict section 5.
 """
 import dataclasses
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import query
 from .analysis import matchup, projection, waiver
@@ -406,6 +407,23 @@ def build(con, team: str | None = None, sims: int = 10000, seed: int = 0,
         "research": _research_targets(roster["players"], projected,
                                       moves["best_by_player"], profile),
     }
+
+
+def default_path(data: dict, root="reports") -> Path:
+    """
+    Where a report lands when no path is given: `reports/<season>-W<week>.md`.
+
+    One file per league week, deliberately overwritten within it — the point is
+    a week-over-week series you can diff, not an archive of every invocation.
+    Falls back to the generation date when the snapshot has no calendar.
+    """
+    league = data["league"]
+    season, week = league.get("season"), league.get("current_week")
+    parts = [str(season)] if season is not None else []
+    if week is not None:
+        parts.append(f"W{week}")
+    stem = "-".join(parts) or data["generated_at"][:10]
+    return Path(root) / f"{stem}.md"
 
 
 # --- render -------------------------------------------------------------
