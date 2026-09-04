@@ -49,6 +49,8 @@ fantasy pull                         # snapshot your league (or pass a league ke
 fantasy pull 466.l.28641 --skip-stats
 fantasy sql "select * from v_my_team"
 fantasy view                         # open the league interface in your browser
+fantasy matchup "Guan Yu"            # your odds in each category against them
+fantasy waivers                      # free-agent pickups ranked by odds bought
 ```
 
 | Command | Description |
@@ -61,6 +63,8 @@ fantasy view                         # open the league interface in your browser
 | `fantasy pulls` | List past pulls with status and timestamps. |
 | `fantasy tables` | Every table and view with row counts. |
 | `fantasy view` | Launch the league interface in your browser. |
+| `fantasy matchup [TEAM]` | Win probability per category against a team, or the whole league. |
+| `fantasy waivers` | Rank free-agent add/drops by how much they move the odds. |
 | `fantasy sql "<query>"` | Run ad-hoc SQL. |
 
 `pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
@@ -122,6 +126,101 @@ Views resolving to the latest pull: `v_leagues`, `v_league_settings`, `v_stat_ca
 `v_roster_positions`, `v_teams`, `v_players`, `v_rosters`, `v_player_stats`,
 `v_roster_players`, `v_my_team`, `v_free_agents`.
 
+## Analysis
+
+Two commands sit on top of a Monte Carlo model of a fantasy week. Both simulate
+thousands of weeks, so every number is a probability rather than a projection.
+
+### Benchmarking against another team
+
+```sh
+fantasy matchup "Guan Yu"          # one opponent
+fantasy matchup                    # every opponent at once
+fantasy matchup 8 --sims 50000     # by team id, more precision
+```
+
+```
+Red Eyes Black Dragon vs Guan Yu  10,000 simulated weeks, 3.5 games/team
+
+ cat   Red Eyes Black Dra   Guan Yu   win
+ PTS   630.9                635.7      48.4%   ######......
+ REB   217.9                232.8      36.4%   ####........
+ AST   135.7                151.4      30.0%   ####........
+ ...
+Expected score 3.8 of 9 categories   |   matchup 33.8% win, 0.0% tie, 66.2% loss
+```
+
+The no-argument form runs your week against all eleven opponents and sorts them
+hardest first — the fastest way to see which categories you are structurally
+losing rather than losing to one particular roster.
+
+### Simulating free-agent pickups
+
+```sh
+fantasy waivers                    # best add/drops against the league
+fantasy waivers --vs Starboy       # optimise for one matchup
+fantasy waivers --by-player        # one row per free agent, with their best drop
+```
+
+Every free agent is paired with every plausible drop, and the pair is scored by
+the change in **expected categories won per week**. Drop candidates are not
+guessed at: each of your own players is first priced by what the team loses
+without them, and only the cheapest are offered up. Illegal results are filtered
+— a swap that leaves you unable to fill the starting lineup never appears.
+
+Both commands share options: `--sims`, `--seed`, `--team` (analyse someone
+else's roster), `--periods` (which stat windows to blend), and `--games`
+(NBA games per team per week).
+
+### The model
+
+A week is simulated per player and summed:
+
+| Step | How |
+|---|---|
+| Per-game rate | Recency-weighted blend of the season/30/14/7-day windows, weighting each window by the games in it. |
+| Games played | `Binomial(4, p)`, where `p` folds in Yahoo injury status and games missed so far. |
+| Usage | One draw per player per week, shared across their categories, so points, rebounds and assists move together. Its spread widens as the sample behind the rate shrinks. |
+| Counting stats | Gamma matched to a per-game variance of `mean + (cv × mean)²` — a Poisson floor for rare events plus a proportional term for volume. |
+| FG% / FT% | Attempts drawn, then makes as `Binomial(attempts, form)`; team percentages pool real makes over real attempts, the way Yahoo scores them. |
+
+Every player is drawn **once** into a column, so a lineup is a set of columns to
+add up and a swap is one vector subtract and one add. Candidates are therefore
+scored against identical simulated weeks, and a reported gain is a real
+difference rather than two noisy numbers subtracted — top moves hold to ±0.01
+categories across seeds.
+
+Two things the snapshot cannot tell it, both surfaced as options rather than
+hidden: there are no game logs, so per-game variance comes from the calibrated
+model above rather than from a player's own history; and there is no NBA
+schedule, so `--games` defaults to the league-wide average of 3.5 rather than
+counting each team's real games that week.
+
+The knobs live at the top of `fantasy/analysis/projection.py` — recency weights,
+per-category spread, and the availability table by injury status.
+
+**[docs/ALGORITHMS.md](docs/ALGORITHMS.md)** documents all of it properly: every
+formula, how the constants were calibrated, a variance decomposition showing
+which categories are decided by the schedule and which by noise, and the
+limitations worth knowing before you trust a number — and a prioritised list of
+what would make the simulation better, led by pulling the real NBA schedule.
+
+### From Python
+
+Each entry point takes an open connection and returns plain dicts:
+
+```python
+from fantasy.store import db
+from fantasy.analysis import matchup, waiver
+
+with db.connect(read_only=True) as con:
+    report = matchup.head_to_head(con, team_b="Guan Yu", sims=20000)
+    print(report["categories"][0]["p_win"])
+
+    moves = waiver.add_drop(con, opponent="Starboy")
+    print(moves["moves"][0]["add"]["name"], moves["moves"][0]["delta_cats"])
+```
+
 ### Example queries
 
 ```sql
@@ -157,6 +256,11 @@ fantasy/
 ├── pull.py           # snapshot orchestration
 ├── query.py          # read-side queries over the latest snapshot
 ├── server.py         # local JSON API + app host
+├── analysis/
+│   ├── projection.py # player -> weekly rates, variance, availability
+│   ├── simulate.py   # Monte Carlo engine, one column per player
+│   ├── matchup.py    # head-to-head and against-the-field odds
+│   └── waiver.py     # free-agent add/drop search
 ├── templates/
 │   └── app.html      # the interface
 ├── yahoo/
@@ -166,12 +270,18 @@ fantasy/
 └── store/
     ├── db.py         # DuckDB access
     └── schema.sql    # tables + views
+
+docs/
+└── ALGORITHMS.md     # the model, its calibration, and its limits
 ```
 
-`tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures with no network:
+`tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures, and
+`tests/test_analysis.py` the simulation math against hand-built players. Neither
+touches the network or the database:
 
 ```sh
 .venv/bin/python tests/test_parse.py
+.venv/bin/python tests/test_analysis.py
 ```
 
 ## Notes
