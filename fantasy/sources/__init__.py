@@ -1,41 +1,9 @@
 """
-Registry of ranking sites this app knows how to scrape.
+External data sources — everything the store pulls in besides your Yahoo league.
 
-Each entry pairs a default URL with a pure `parse(html) -> list[dict]` function — no
-network inside the parser, mirroring yahoo/parse.py vs yahoo/client.py, and for the
-same reason: the parser is what breaks when a site changes its template, and it is
-the part worth testing against a saved HTML fixture rather than a live page.
-
-Row dicts share a common shape:
-    rank         int | None   — the source's primary ranking
-    player_name  str          — as printed by the source, matched against v_players
-    team_abbr    str | None
-    positions    list[str]
-    age          float | None
-    extra        dict         — anything source-specific (other rankings, values, ...)
-
-Add a new site by writing one module with a `parse_xxx(html)` function next to
-hashtagbasketball.py and registering it below — nothing else in the app changes.
+Each subpackage is independent: its own pull sequence in schema.sql, its own
+orchestrator alongside this package (`rankings.py`, `schedule.py`), and no shared
+code between them beyond that shape. `rankings/` is a registry of interchangeable
+ranking-site scrapers behind one `SOURCES` dict; `schedule/` is a single stats.nba.com
+integration, split into `client.py`/`parse.py` the same way `yahoo/` is.
 """
-from dataclasses import dataclass
-from typing import Callable
-
-from . import dynatyze, hashtagbasketball
-
-
-@dataclass(frozen=True)
-class Source:
-    url: str
-    parse: Callable[[str], list[dict]]
-
-
-SOURCES: dict[str, Source] = {
-    "hashtag_dynasty": Source(
-        url=hashtagbasketball.DYNASTY_URL,
-        parse=hashtagbasketball.parse_dynasty,
-    ),
-    "dynatyze_dynasty": Source(
-        url=dynatyze.DYNASTY_URL,
-        parse=dynatyze.parse_dynasty,
-    ),
-}
