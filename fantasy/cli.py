@@ -475,7 +475,14 @@ def report_cmd(
         fail(str(exc))
 
     if out:
-        out.write_text(text)
+        # Create the directory rather than throwing away a simulation that
+        # already ran, and report a write failure the way every other command
+        # reports one instead of unwinding a traceback over the report.
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(text)
+        except OSError as exc:
+            fail(f"could not write {out}: {exc}")
         err.print(f"[green]Wrote[/green] {out} "
                   f"[dim]({len(text.splitlines()):,} lines)[/dim]")
     else:
