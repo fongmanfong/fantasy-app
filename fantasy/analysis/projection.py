@@ -14,6 +14,8 @@ built once and reused across a matchup, a waiver search, or a REPL session.
 """
 from dataclasses import dataclass, field
 
+import duckdb
+
 from ..query import latest_pull, _names
 
 # Counting categories, plus the makes/attempts pairs behind FG% and FT%.
@@ -46,11 +48,9 @@ USAGE_CV = 0.12
 AVAILABILITY = {"Healthy": 1.0, "GTD": 0.80, "P": 0.90, "Q": 0.80, "D": 0.60,
                 "O": 0.0, "INJ": 0.0, "NA": 0.20, "IL": 0.0}
 
-# NBA teams play 3 or 4 times in a fantasy week; without the league schedule in
-# the database this is the league-wide average.
+# Fallback for a team `team_schedule()` has no data for (an unpulled schedule,
+# or a player between NBA teams) — the old league-wide guess, used only there.
 GAMES_PER_WEEK = 3.5
-# Games are drawn as Binomial(SCHEDULE_SLOTS, games_per_week / SCHEDULE_SLOTS),
-# which reproduces the real 3-or-4 spread instead of a fixed count.
 SCHEDULE_SLOTS = 4
 
 
@@ -68,6 +68,7 @@ class Player:
     gp: float                      # season games played
     n_eff: float                   # recency-weighted games behind the rates
     p_play: float                  # chance of appearing in a scheduled game
+    n_slots: int = SCHEDULE_SLOTS  # weekly trials `p_play` is drawn against
     rates: dict[str, float] = field(default_factory=dict)   # per-game means
     fg_pct: float | None = None
     ft_pct: float | None = None
@@ -141,14 +142,90 @@ def _blend(splits: dict, player_key: str, periods: list[str]) -> tuple[dict, flo
     return rates, season_gp or n_eff, n_eff
 
 
+def team_schedule(con) -> dict[str, tuple[int, float]]:
+    """
+    Real per-NBA-team weekly game counts, from the most recently pulled season
+    in `v_nba_schedule`.
+
+    Every team plays the same number of games over a season, so the mean is
+    close to identical across teams; what differs is how the schedule clusters
+    them into weeks. That is fit to a Binomial(n, p) by matching the mean and
+    variance of games actually played across every Monday-Sunday week of the
+    season (including bye weeks, counted as zero) — a team with a lot of
+    back-to-backs gets a wider spread than one with an even schedule, instead
+    of every team sharing one fixed shape.
+
+    Returns {tricode: (n, p)}, empty if no schedule has been pulled — including
+    against a snapshot older than this feature, whose read-only connection
+    never ran the migration that adds `v_nba_schedule`. Callers fall back to
+    (SCHEDULE_SLOTS, GAMES_PER_WEEK / SCHEDULE_SLOTS) per team.
+    """
+    try:
+        season = con.execute(
+            "select season from v_nba_schedule group by season order by season desc limit 1"
+        ).fetchone()
+    except duckdb.CatalogException:
+        return {}
+    if not season:
+        return {}
+
+    rows = con.execute("""
+        with weeks as (
+            select distinct date_trunc('week', game_date) as week_start
+            from v_nba_schedule where season = ?
+        ),
+        team_games as (
+            select nba_team, date_trunc('week', game_date) as week_start,
+                   count(*) as games
+            from v_nba_team_schedule where season = ?
+            group by 1, 2
+        ),
+        teams as (select distinct nba_team from v_nba_team_schedule where season = ?)
+        select t.nba_team, avg(coalesce(tg.games, 0)), var_pop(coalesce(tg.games, 0))
+        from teams t
+        cross join weeks w
+        left join team_games tg on tg.nba_team = t.nba_team and tg.week_start = w.week_start
+        group by 1
+    """, [season[0], season[0], season[0]]).fetchall()
+
+    out = {}
+    for team, mean, var in rows:
+        if not mean or mean <= 0:
+            continue
+        var = max(var or 0.0, 0.0)
+        if var >= mean:
+            # No binomial fits a spread that wide; treat the mean as fixed.
+            out[team] = (max(1, round(mean)), 1.0)
+            continue
+        p = 1.0 - var / mean
+        n = max(1, round(mean / p))
+        out[team] = (n, min(1.0, mean / n))
+    return out
+
+
+def average_games_per_week(schedule: dict[str, tuple[int, float]]) -> float:
+    """League-wide mean games/week, for contexts that want one number."""
+    if not schedule:
+        return GAMES_PER_WEEK
+    return sum(n * p for n, p in schedule.values()) / len(schedule)
+
+
 def build(con, periods: list[str] | None = None,
-          games_per_week: float = GAMES_PER_WEEK) -> list[Player]:
+          games_per_week: float | None = None) -> list[Player]:
     """
     Project every rostered player and free agent in the latest snapshot.
 
     `periods` defaults to whichever windows the snapshot actually has. Players
     with no games in any window are dropped — there is nothing to project.
+
+    `games_per_week` defaults to `None`, which projects each player against
+    their own NBA team's real schedule (`team_schedule`). Passing a number
+    overrides that with one flat rate for every team — useful for a what-if
+    ("how would this look at 4 games/week") but no longer the normal path.
     """
+    schedule = {} if games_per_week is not None else team_schedule(con)
+    flat_p = (games_per_week if games_per_week is not None else GAMES_PER_WEEK) / SCHEDULE_SLOTS
+
     pull = latest_pull(con)
     available = [r[0] for r in con.execute(
         "select distinct stat_period from v_player_stats").fetchall()]
@@ -190,13 +267,16 @@ def build(con, periods: list[str] | None = None,
         status_factor = 0.0 if selected_position == "IL" else \
             AVAILABILITY.get(status or "Healthy", 0.6)
 
+        n_slots, p_slot = schedule.get(nba, (SCHEDULE_SLOTS, flat_p))
+
         fga, fta = rates.get("fga", 0.0), rates.get("fta", 0.0)
         players.append(Player(
             player_key=player_key, name=name, team_key=team_key, nba=nba,
             status=status, positions=list(positions or []),
             selected_position=selected_position, is_free_agent=bool(is_free_agent),
             gp=gp, n_eff=n_eff,
-            p_play=min(1.0, (games_per_week / SCHEDULE_SLOTS) * status_factor * durability),
+            p_play=min(1.0, p_slot * status_factor * durability),
+            n_slots=n_slots,
             rates={k: rates.get(k, 0.0) for k in COUNTING + ATTEMPTS},
             fg_pct=(rates.get("fgm", 0.0) / fga) if fga > 0 else None,
             ft_pct=(rates.get("ftm", 0.0) / fta) if fta > 0 else None,

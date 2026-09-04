@@ -39,7 +39,7 @@ class Fact:
     """One rule the model is running under, and where it came from."""
     label: str
     value: str
-    source: str          # "yahoo" — read from the snapshot; "assumed" — not in it
+    source: str          # "yahoo"/"nba.com" — real data; "assumed" — guessed
     note: str = ""
     short: str = ""      # compact form for the one-line header
 
@@ -141,8 +141,30 @@ def load(con, games_per_week: float | None = None) -> Rules:
 
     categories, facts = _scored_categories(con)
 
-    from .projection import GAMES_PER_WEEK
-    gpw = GAMES_PER_WEEK if games_per_week is None else games_per_week
+    from .projection import GAMES_PER_WEEK, average_games_per_week, team_schedule
+    if games_per_week is not None:
+        gpw = games_per_week
+        games_fact = Fact(
+            "games per team", f"{gpw}/week", "assumed",
+            "overridden with --games; the real NBA schedule is ignored",
+            short=f"{gpw} games/week (override)")
+    else:
+        schedule = team_schedule(con)
+        if schedule:
+            gpw = average_games_per_week(schedule)
+            games_fact = Fact(
+                "games per team", f"{gpw:.2f}/week league avg", "nba.com",
+                "per-team rate fit to the pulled schedule, so a team with "
+                "clustered back-to-backs gets a wider week-to-week spread "
+                "than one with an even one; override with --games",
+                short=f"{gpw:.1f} games/week (schedule)")
+        else:
+            gpw = GAMES_PER_WEEK
+            games_fact = Fact(
+                "games per team", f"{gpw}/week", "assumed",
+                "no NBA schedule pulled; run `fantasy schedule pull` or "
+                "override with --games",
+                short=f"{gpw} games/week")
 
     facts = [
         Fact("scoring", f"head-to-head, {len(categories)} categories", "yahoo"),
@@ -157,9 +179,7 @@ def load(con, games_per_week: float | None = None) -> Rules:
         Fact("lineup management", "perfect", "assumed",
              "models the ceiling of daily streaming, not a real manager",
              short="perfect management"),
-        Fact("games per team", f"{gpw}/week", "assumed",
-             "no NBA schedule in the snapshot; override with --games",
-             short=f"{gpw} games/team"),
+        games_fact,
         Fact("acquisition limits", "none", "assumed",
              "max adds per week/season are not pulled, so an add costs nothing",
              short="unlimited adds"),

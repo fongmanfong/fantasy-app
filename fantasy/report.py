@@ -149,7 +149,8 @@ def _profile(player: dict, cats: list[dict]) -> str:
 
 def _data_quality(meta: dict, cal: dict, pull_age_days: float,
                   n_periods: int, identical_windows: bool,
-                  fa_total: int, fa_usable: int, settings: dict) -> list[dict]:
+                  fa_total: int, fa_usable: int, settings: dict,
+                  schedule_used: bool = False) -> list[dict]:
     """
     What is wrong with this snapshot, as machine-readable codes plus prose.
 
@@ -197,13 +198,27 @@ def _data_quality(meta: dict, cal: dict, pull_age_days: float,
                        "weeks actually finished. Section 4 measures you against "
                        "all opponents instead.",
     })
-    out.append({
-        "code": "no_schedule", "severity": "material",
-        "message": "No NBA schedule, so every team is assumed to play "
-                   f"{cal.get('games_per_week', 3.5)} games a week.",
-        "implication": "44-49% of the variance in the volume categories is how "
-                       "many games actually get played (docs/ALGORITHMS.md).",
-    })
+    if schedule_used:
+        out.append({
+            "code": "schedule_not_week_specific", "severity": "note",
+            "message": "Games/week now comes from each NBA team's real schedule "
+                       f"({cal.get('games_per_week', 0):.2f}/week league average), but "
+                       "the snapshot has no fantasy-week calendar, so it is fit to a "
+                       "typical week of the season rather than matched to the actual "
+                       "dates of the current matchup.",
+            "implication": "Treat game counts as realistic, not as a confirmed count "
+                           "for this specific week — a bye week or a Cup-heavy week "
+                           "would be missed.",
+        })
+    else:
+        out.append({
+            "code": "no_schedule", "severity": "material",
+            "message": "No NBA schedule pulled, so every team is assumed to play "
+                       f"{cal.get('games_per_week', 3.5)} games a week.",
+            "implication": "44-49% of the variance in the volume categories is how "
+                           "many games actually get played (docs/ALGORITHMS.md). Run "
+                           "`fantasy schedule pull`.",
+        })
     out.append({
         "code": "not_backtested", "severity": "material",
         "message": "No probability in this report has ever been compared "
@@ -325,7 +340,7 @@ def _research_targets(roster_players: list[dict], projected: dict,
 # --- build --------------------------------------------------------------
 
 def build(con, team: str | None = None, sims: int = 10000, seed: int = 0,
-          games_per_week: float = projection.GAMES_PER_WEEK,
+          games_per_week: float | None = None,
           periods: list[str] | None = None, top: int = 10, drops: int = 6,
           min_gp: float = 5.0, now: datetime | None = None) -> dict:
     """
@@ -352,6 +367,9 @@ def build(con, team: str | None = None, sims: int = 10000, seed: int = 0,
     rules = dataclasses.asdict(field["rules"])   # never let the dataclass escape
     cat_defs = rules["categories"]
     field_cats = {c["key"]: c["p_win"] for c in field["categories"]}
+    gpw = field["games_per_week"]                # the resolved rate, real or overridden
+    schedule_used = any(f["label"] == "games per team" and f["source"] == "nba.com"
+                        for f in rules["facts"])
 
     projected = {p.player_key: p for p in projection.build(con, periods, games_per_week)}
     fa_by_key = {p["player_key"]: p for p in fa["players"]}
@@ -394,13 +412,14 @@ def build(con, team: str | None = None, sims: int = 10000, seed: int = 0,
                           ("wins", "losses", "ties", "standing")}},
         "snapshot": {"pull_id": meta["pull"]["id"], "pulled_at": meta["pull"]["at"],
                      "age_days": round(age_days, 1)},
-        "model": {"sims": sims, "seed": seed, "games_per_week": games_per_week,
+        "model": {"sims": sims, "seed": seed, "games_per_week": gpw,
                   "observed_period": "season", "stat_windows": meta["periods"],
                   "horizon": "one_week"},
         "category_definitions": cat_defs,
-        "caveats": _data_quality(meta, {**cal, "games_per_week": games_per_week},
+        "caveats": _data_quality(meta, {**cal, "games_per_week": gpw},
                                  age_days, n_periods, identical, fa_pool_size,
-                                 moves["considered"]["free_agents"], settings),
+                                 moves["considered"]["free_agents"], settings,
+                                 schedule_used),
         "roster": {"players": roster["players"], "pool": roster["pool"],
                    "projected": projected},
         "category_profile": profile,
@@ -463,7 +482,7 @@ def _s1_snapshot(d: dict) -> list[str]:
         ["League week", f"{league.get('current_week')}, playoffs began week "
                         f"{league.get('playoff_start_week')}"],
         ["Model", f"{d['model']['sims']:,} simulated weeks, seed "
-                  f"{d['model']['seed']}, {d['model']['games_per_week']} games/team"],
+                  f"{d['model']['seed']}, {d['model']['games_per_week']:.2f} games/team"],
     ])
     out += ["", "**Read these before acting on any number below.**", ""]
     for c in d["caveats"]:
@@ -673,11 +692,11 @@ def _s5_waivers(d: dict) -> list[str]:
 
 def _s6_assumptions(d: dict) -> list[str]:
     facts = d["rules"]["facts"]
-    read = [[f["label"], f["value"]] for f in facts if f["source"] == "yahoo"]
+    read = [[f["label"], f["value"], f["source"]] for f in facts if f["source"] != "assumed"]
     assumed = [[f["label"], f["value"], f["note"]] for f in facts
                if f["source"] == "assumed"]
-    out = ["## 6. Model assumptions", "", "Read from the snapshot:", ""]
-    out += _table(["Rule", "Value"], read)
+    out = ["## 6. Model assumptions", "", "Not assumed — read from real data:", ""]
+    out += _table(["Rule", "Value", "Source"], read)
     out += ["", "Assumed, because the snapshot does not carry them:", ""]
     out += _table(["Rule", "Value", "Why it matters"], assumed)
     return out + [

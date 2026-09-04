@@ -184,10 +184,16 @@ fantasy/
 ## Where the open work is
 
 `docs/ALGORITHMS.md` ends with a prioritised list of what would improve the
-model. The top two, and the reasoning behind the order:
+model. The top item — pulling the NBA schedule — is **done**: `fantasy schedule
+pull` populates `nba_schedule`, and `projection.team_schedule` fits each NBA
+team's real games-per-week from it, replacing the old flat 3.5 assumption
+(`games_per_week`/`--games` is now a fallback and an explicit override, not the
+normal path). The next two, and the reasoning behind the order:
 
-1. **Pull the NBA schedule.** 44–49% of the variance in the volume categories is
-   *how many games get played*, currently a flat 3.5 assumption.
+1. **Match the schedule to the actual fantasy week.** The snapshot has no
+   week-number → date-range table, so `team_schedule` fits against the whole
+   season rather than the specific week being analysed — a real bye week looks
+   like any other week.
 2. **Backtest against real weekly results** via `/league/{key}/scoreboard`.
    Nothing validates the probabilities today, which means every other
    improvement on the list is currently unmeasurable.

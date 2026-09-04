@@ -299,7 +299,7 @@ def rules_cmd():
 
     console.print(f"\n[bold]{r.name}[/bold]  [dim]{r.season} · {r.league_key}[/dim]\n")
     render(
-        [(("[green]yahoo[/green]" if f.source == "yahoo" else "[yellow]assumed[/yellow]"),
+        [((f"[green]{f.source}[/green]" if f.source != "assumed" else "[yellow]assumed[/yellow]"),
           f.label, f.value, f.note) for f in r.facts],
         ["source", "rule", "value", "note"],
     )
@@ -321,8 +321,9 @@ def matchup_cmd(
     opponent: str = typer.Argument(None, help="Opponent: team key, id, or part of a name. Omitted: the whole league."),
     team: str = typer.Option(None, "--team", help="Team to analyse. Default: yours."),
     sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
-    games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
-                                help="Average NBA games per team per week."),
+    games: float = typer.Option(None, "--games",
+                                help="Override average NBA games per team per week. "
+                                     "Default: fit to the pulled NBA schedule."),
     periods: str = typer.Option(None, "--periods", help="Stat windows to blend. Default: all present."),
     seed: int = typer.Option(0, "--seed", help="Random seed. Use different values to check stability."),
 ):
@@ -343,7 +344,7 @@ def matchup_cmd(
 def _render_matchup(r: dict) -> None:
     a, b = r["a"], r["b"]
     console.print(f"\n[bold]{a['name']}[/bold] vs [bold]{b['name']}[/bold]  "
-                  f"[dim]{r['sims']:,} simulated weeks, {r['games_per_week']} games/team[/dim]")
+                  f"[dim]{r['sims']:,} simulated weeks, {r['games_per_week']:.2f} games/team[/dim]")
     _assumptions(r["rules"])
     console.print()
 
@@ -392,8 +393,9 @@ def waivers_cmd(
     top: int = typer.Option(12, "--top", help="Moves to show."),
     drops: int = typer.Option(6, "--drops", help="How many of your players to consider dropping."),
     sims: int = typer.Option(4000, "--sims", help="Simulated weeks."),
-    games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
-                                help="Average NBA games per team per week."),
+    games: float = typer.Option(None, "--games",
+                                help="Override average NBA games per team per week. "
+                                     "Default: fit to the pulled NBA schedule."),
     min_gp: float = typer.Option(5.0, "--min-gp", help="Ignore free agents below this many games."),
     periods: str = typer.Option(None, "--periods", help="Stat windows to blend. Default: all present."),
     seed: int = typer.Option(0, "--seed", help="Random seed."),
@@ -458,8 +460,9 @@ def report_cmd(
     out: str = typer.Option(None, "--out", help="Where to write. Default: "
                             f"{report_mod.DEFAULT_OUT}. Use - for stdout."),
     sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
-    games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
-                                help="Average NBA games per team per week."),
+    games: float = typer.Option(None, "--games",
+                                help="Override average NBA games per team per week. "
+                                     "Default: fit to the pulled NBA schedule."),
     seed: int = typer.Option(0, "--seed", help="Random seed."),
     min_gp: float = typer.Option(5.0, "--min-gp", help="Ignore free agents below this many games."),
     top: int = typer.Option(10, "--top", help="Free agents to rank."),

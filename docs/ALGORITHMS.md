@@ -5,10 +5,13 @@ How `fantasy matchup` and `fantasy waivers` turn a snapshot into probabilities.
 Everything here follows from one constraint: **the snapshot holds totals, not
 game logs.** Yahoo gives four windows per player — season, last 30, last 14,
 last 7 days — each a bag of counting totals plus games played. There is no
-per-game history to measure a player's real variance from, and no NBA schedule
-to say who plays four times next week. Both gaps are filled with explicit,
-documented parameters rather than hidden defaults, and both are listed under
-[Limitations](#limitations).
+per-game history to measure a player's real variance from, so that gap is
+filled with an explicit, documented parameter rather than a hidden default,
+and it is listed under [Limitations](#limitations). A second gap — how many
+games each team actually plays in a week — used to be filled the same way,
+but is now read from the real NBA schedule (`team_schedule` in
+[projection.py](../fantasy/analysis/projection.py)); see
+[Games](#games) below.
 
 The pipeline is five stages, preceded by a rules check:
 
@@ -60,8 +63,12 @@ baked into the code.
 |---|---|
 | daily lineups | Yahoo's roster-change frequency is not pulled |
 | perfect management | an idealisation, not a setting |
-| 3.5 games per team | no NBA schedule |
 | unlimited adds | max acquisitions are not pulled |
+
+Games per team is **no longer on this list** — it is read from the pulled NBA
+schedule (`fantasy schedule pull`) and fit per team, falling back to a flat
+3.5/week only when no schedule has been pulled, or when `--games` overrides it
+on purpose.
 
 `fantasy rules` prints the whole table with sources and notes. The one-line
 version appears above every matchup and waiver run — league rules change, and a
@@ -139,9 +146,13 @@ is the kind of player who misses games. Yahoo's status field carries the first,
 games played carries the second.
 
 ```
-    p_play = (games_per_week / 4) · status_factor · durability
+    p_play = p_slot · status_factor · durability
     durability = 0.5 + 0.5 · min(1, games_played / games_elapsed)
 ```
+
+`p_slot` is a per-scheduled-game probability, and it comes from the player's
+own NBA team rather than a league constant — see [Games](#games) for where it
+is fit.
 
 `status_factor` comes from the `AVAILABILITY` table
 ([projection.py:46](../fantasy/analysis/projection.py)):
@@ -164,10 +175,8 @@ used raw. The two terms multiply, and both are injury signals, so raw durability
 would double-count: a GTD player who has played 33 of 82 games would come out at
 `0.80 × 0.40 = 32%` available, which is far too harsh for a single week. Softened,
 he lands at `0.80 × 0.70 = 56%`, and a healthy 72-game player at 94% — both
-before the games-per-week factor, which scales all of them to a per-game number.
-
-The `games_per_week / 4` factor converts this to a per-scheduled-game
-probability; see the next stage.
+before `p_slot`, which scales all of them to a per-scheduled-game number; see
+the next stage for where that comes from.
 
 ---
 
@@ -179,7 +188,7 @@ Each player's week is built from four random variables. Every one is drawn as a
 `(sims × players)` array, so the whole league is simulated in one pass.
 
 ```
-    G  ~ Binomial(4, p_play)                      games played
+    G  ~ Binomial(n_slots, p_play)                 games played
     U  ~ Gamma(mean 1, cv = usage_cv)             usage / role
     X  ~ Gamma(mean G·U·rate, var G·v)            counting stat
     A  ~ Gamma(mean G·U·rate, var G·v)            shot attempts
@@ -189,10 +198,36 @@ Each player's week is built from four random variables. Every one is drawn as a
 
 ### Games
 
-`Binomial(4, p_play)` reproduces the real 3-or-4 games a week spread instead of
-a fixed count. With `p_play = 0.875` it gives a mean of 3.5 and an sd of 0.66 —
-close to the true league-wide distribution — and the same draw absorbs injury
-risk, since an unavailable player simply has a lower `p`.
+`n_slots` and `p_play` both come from `team_schedule`
+([projection.py:145](../fantasy/analysis/projection.py)), fit **per NBA team**
+from the pulled schedule rather than shared by the whole league. For each team,
+every Monday–Sunday week of the season (including a bye week, counted as zero)
+gives one observation of games played; `(n, p)` is chosen by matching a
+Binomial's mean and variance to that team's real mean and variance, then
+`p_play = p · status_factor · durability` folds in the individual player's
+health and durability on top.
+
+The point of fitting per team rather than assuming one shape for the league is
+that real NBA schedules are not uniform: a team with a lot of clustered
+back-to-backs has real variance well above what a flat `Binomial(4, 3.5/4)`
+implies (some teams in the 2026-27 schedule fit to `n=5, p=0.64`, which allows
+an occasional 5-game week; most fit closer to `n=4, p=0.80`), while the
+league-wide mean itself is usually a little under the old 3.5 assumption
+(3.2 for the 2026-27 slate). Both matter for the volume categories: the
+low-variance old assumption understated how often a lineup gets an unusually
+big or unusually thin week.
+
+`team_schedule` falls back to `(SCHEDULE_SLOTS=4, GAMES_PER_WEEK/4)` for a
+team it has no data for — no schedule pulled yet, or an explicit `--games`
+override, which replaces every team's fit with one flat rate for a deliberate
+what-if.
+
+One caveat worth keeping in mind: the fit uses the season as a whole, not the
+specific calendar dates of "this" fantasy week, because the snapshot carries
+no fantasy-week date ranges to match against (see
+[Limitations](#limitations)). It answers "how many games does this team play
+in a typical week," not "how many games do they play in the week starting
+next Monday."
 
 ### Usage
 
@@ -288,7 +323,12 @@ Disabling each source in turn, holding the mean fixed, on a real 14-man roster
 | FG% | 0.475 | 0.025 | 0.052 | 5% | 1% | 2% | **93%** |
 | FT% | 0.771 | 0.040 | 0.052 | 6% | 2% | 8% | **87%** |
 
-(Shares do not sum to 100% — removing one source changes the interaction terms.)
+(Shares do not sum to 100% — removing one source changes the interaction terms.
+**This table predates the real-schedule change above** — it was measured under
+the old flat `Binomial(4, 3.5/4)` assumption, and the real per-team fit has
+both a lower mean and, for some teams, a wider spread, so the schedule share
+here is likely a slight underestimate. It has not been re-measured; treat the
+column as directionally right, not exact.)
 
 Three things worth knowing from this:
 
@@ -451,19 +491,21 @@ is the cheap way to tighten a close call.
 
 Roughly in order of how much they cost:
 
-1. **No NBA schedule.** Every team is assumed to play `--games` (default 3.5)
-   times. Real weeks range from 2 to 5, and since schedule is the largest
-   single source of variance in the volume categories, knowing the real count
-   would be the biggest available improvement — it is also what makes streaming
-   work, which the model cannot see at all. Pass `--games` to explore it.
+1. **The real schedule is not matched to the specific fantasy week.** The
+   snapshot carries no fantasy-week date ranges, so `team_schedule` fits each
+   team's games-per-week to its *whole season*, not to the actual dates of the
+   week being analysed. A real bye week or a real Cup-heavy week is smoothed
+   into the season average rather than reflected exactly.
 2. **No game logs, so variance is modelled rather than measured.** `SPREAD` is
    one constant per category applied to every player; in reality a
    high-usage creator's points are steadier than a catch-and-shoot specialist's.
 3. **`SHOOTING_ESS` carries the percentage categories** almost single-handedly
    (see the decomposition above).
 4. **Players are independent.** Two players on the same NBA team, or on either
-   side of the same real game, are drawn independently. This understates the
-   variance of a stacked roster.
+   side of the same real game, are drawn independently — including their game
+   count: `team_schedule` gives teammates the same `(n, p)` shape, but each
+   draws from it separately, so the model does not know they play the exact
+   same games. This understates the variance of a stacked roster.
 5. **Daily lineups are assumed, and assumed to be played perfectly.** Every
    non-IL player accrues every game they play — the daily-league assumption,
    surfaced by `rules.py` on every run because the snapshot cannot confirm it.
@@ -492,7 +534,7 @@ Everything tunable, in one place:
 | `ATTEMPT_CV` | [projection.py:36](../fantasy/analysis/projection.py) | how much shot volume swings |
 | `USAGE_CV` | [projection.py:41](../fantasy/analysis/projection.py) | baseline week-to-week role drift |
 | `AVAILABILITY` | [projection.py:46](../fantasy/analysis/projection.py) | play probability by injury status |
-| `GAMES_PER_WEEK` | [projection.py:51](../fantasy/analysis/projection.py) | league-average games (also `--games`) |
+| `GAMES_PER_WEEK` / `SCHEDULE_SLOTS` | [projection.py:49](../fantasy/analysis/projection.py) | fallback only — used when `team_schedule` has no data for a team, or `--games` overrides it |
 | `SHOOTING_ESS` | [simulate.py:30](../fantasy/analysis/simulate.py) | how streaky shooting percentages are |
 | `FLEX` | [waiver.py:19](../fantasy/analysis/waiver.py) | which positions a flex slot accepts |
 | `SIMULATED` | [rules.py](../fantasy/analysis/rules.py) | Yahoo stat ids the model can score |
@@ -515,7 +557,8 @@ a hunch about what might help.
 
 | # | Change | Buys |
 |---|---|---|
-| 1 | Pull the NBA schedule | 44–49% of the variance in the volume categories, plus streaming |
+| ~~1~~ | ~~Pull the NBA schedule~~ — **done**, see [Games](#games) | 44–49% of the variance in the volume categories, plus streaming |
+| 1 | Match the schedule to the actual fantasy week | turns "a typical week" into "this week" |
 | 2 | Backtest against real weekly results | makes every other item on this list measurable |
 | 3 | Per-date stat pulls → real game logs | replaces the whole modelled variance layer with measurement |
 | 4 | Difference consecutive snapshots | the same, for free, with no new API surface |
@@ -524,27 +567,23 @@ a hunch about what might help.
 | 7 | Replacement-level drop pricing | a real valuation instead of a shortlist |
 | 8 | Trades, punts, and a playoff horizon | new analyses on the engine that already exists |
 
-### 1. Pull the NBA schedule
+### 1. Match the schedule to the actual fantasy week
 
-The single biggest available improvement. Half the variance in weekly points
-(49%) and rebounds (44%) is *how many games get played*, and right now every
-team is assumed to play `--games` (default 3.5) — so the model cannot tell a
-2-game week from a 5-game week, which is the largest real edge in a daily
-league.
+The schedule is pulled and used (`team_schedule`,
+[projection.py:145](../fantasy/analysis/projection.py)) — `p_play` and the
+games-played draw are now fit **per NBA team** from the real 2026-27 slate
+instead of a league-wide 3.5 assumption. What is still missing is the fantasy
+week itself: the snapshot has no table of week-number → date-range, so the fit
+is against the *whole season's* weeks rather than the specific week being
+analysed. A team on a bye or in a Cup-heavy stretch this week looks the same
+as any other week.
 
-Concretely: a `nba_schedule` table keyed by `(date, nba_team)`, a pull step to
-populate it, and `p_play` becomes per-player-per-week
-(`games_scheduled(player.nba, week) × availability`) instead of a league
-constant. `SCHEDULE_SLOTS` stops being a fixed 4 and becomes that team's real
-count for the week.
-
-Yahoo does not expose an NBA schedule endpoint directly, so this likely means a
-second source. Worth checking first whether `/league/{key}/scoreboard;week=N`
-plus per-date roster calls can reconstruct it, since that stays inside the
-existing OAuth session.
-
-This also unlocks **streaming** — the reason to drop a player on Thursday is
-almost never talent, it is that someone else plays four times next week.
+Yahoo exposes this at `/league/{key}/settings` (`game_weeks`, not currently
+pulled) or can be derived from `/league/{key}/scoreboard;week=N`. Once the
+current week's actual date range is known, `team_schedule` can filter to that
+one week's real game count per team instead of fitting a distribution over the
+season — turning "a typical week" into "this week," which matters most right
+before a bye week or a nationally-televised Cup stretch.
 
 ### 2. Backtest against real weekly results
 

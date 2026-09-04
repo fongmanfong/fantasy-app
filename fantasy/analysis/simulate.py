@@ -10,7 +10,7 @@ carry no sampling noise of their own — only the difference is being measured.
 
 A week is built as:
 
-    games      ~ Binomial(SCHEDULE_SLOTS, p_play)      per player, per sim
+    games      ~ Binomial(n_slots, p_play)              per player, per sim
     usage      ~ Gamma(mean 1, cv from the sample size behind the rate)
     counting   ~ Gamma(mean games*usage*rate, var games*usage*spread)
     attempts   ~ Gamma, then makes ~ Binomial(attempts, shooting form)
@@ -22,8 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .projection import (ATTEMPT_CV, COUNTING, RATE_PAIRS, SCHEDULE_SLOTS,
-                         SPREAD, Player)
+from .projection import ATTEMPT_CV, COUNTING, RATE_PAIRS, SPREAD, Player
 
 # Week-to-week shooting form, as the number of shots' worth of confidence we
 # have in a player's percentage. Lower means streakier.
@@ -72,7 +71,8 @@ def draw(players: list[Player], sims: int = 10000, seed: int | None = 0) -> Draw
         raise ValueError("nothing to simulate")
 
     p_play = np.array([p.p_play for p in players])
-    games = rng.binomial(SCHEDULE_SLOTS, p_play, size=(sims, n)).astype(np.float32)
+    n_slots = np.array([p.n_slots for p in players])
+    games = rng.binomial(n_slots, p_play, size=(sims, n)).astype(np.float32)
 
     # One usage factor per player per week, shared by all their categories.
     cv = np.array([p.usage_cv() for p in players], dtype=np.float32)
