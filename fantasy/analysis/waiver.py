@@ -97,7 +97,7 @@ def _describe(p) -> dict:
 
 def add_drop(con, team: str | None = None, opponent: str | None = None,
              periods=None, sims: int = 4000, seed: int | None = 0,
-             games_per_week: float = projection.GAMES_PER_WEEK,
+             games_per_week: float | None = None,
              max_drops: int = 6, top: int = 15, min_gp: float = 5.0) -> dict:
     """
     Rank every legal free-agent pickup by how much it improves the week.
@@ -177,6 +177,6 @@ def add_drop(con, team: str | None = None, opponent: str | None = None,
                                  key=lambda r: -r["delta_cats"])[:top],
         "drop_candidates": [{**_describe(p), "cost": v} for v, p in drops],
         "considered": {"free_agents": len(candidates), "pairs": len(results)},
-        "sims": sims, "games_per_week": games_per_week,
+        "sims": sims, "games_per_week": rules.games_per_week,
         "categories": rules.categories,
     }

@@ -150,10 +150,11 @@ LIMIT 20;
 
 Independent of the Yahoo snapshot, `fantasy schedule` fetches the league-wide game
 schedule (via [nba_api](https://github.com/swar/nba_api), stats.nba.com's own
-`ScheduleLeagueV2` endpoint) and appends it to DuckDB on its own history — the
-`(date, nba_team)` datasource `docs/ALGORITHMS.md` names as the model's single biggest
-open gap: today `--games` is a flat league-wide guess, because nothing in the store
-knows how many games each team actually plays in a given week.
+`ScheduleLeagueV2` endpoint) and appends it to DuckDB on its own history. This
+is the `(date, nba_team)` datasource `docs/ALGORITHMS.md` used to name as the
+model's single biggest open gap; it is now wired in — `fantasy matchup` and
+`fantasy waivers` fit each NBA team's real games-per-week from it instead of
+assuming a flat league-wide number.
 
 ```sh
 fantasy schedule pull            # season inferred from today's date
@@ -165,8 +166,14 @@ Team columns are Yahoo-style tricodes (`BOS`, `GSW`, ...), so the schedule joins
 straight onto `players.editorial_team_abbr` with no lookup table. Preseason games are
 dropped, as are Emirates NBA Cup semifinal/final placeholders before the group stage
 that decides them has been played — those show up once a re-pull happens after the
-teams are known. This is ingestion only: nothing in `analysis/` reads it yet, so
-`--games` still defaults to 3.5 until `projection.py` is wired up to use it.
+teams are known.
+
+`analysis/projection.py`'s `team_schedule` reads the most recently pulled season and
+fits each team's weekly game count to a Binomial by matching its real mean and
+variance across the season's weeks — a team with clustered back-to-backs gets a
+wider spread than one with an even schedule. `--games` now only matters as a
+fallback (no schedule pulled yet) or as an explicit override that flattens every
+team back to one number, for a deliberate what-if.
 
 ```sql
 -- Real games per NBA team for a date range (a fantasy week, say)
@@ -234,7 +241,7 @@ fantasy matchup 8 --sims 50000     # by team id, more precision
 ```
 
 ```
-Red Eyes Black Dragon vs Guan Yu  10,000 simulated weeks, 3.5 games/team
+Red Eyes Black Dragon vs Guan Yu  10,000 simulated weeks, 3.20 games/team
 
  cat   Red Eyes Black Dra   Guan Yu   win
  PTS   630.9                635.7      48.4%   ######......
@@ -264,7 +271,7 @@ without them, and only the cheapest are offered up. Illegal results are filtered
 
 Both commands share options: `--sims`, `--seed`, `--team` (analyse someone
 else's roster), `--periods` (which stat windows to blend), and `--games`
-(NBA games per team per week).
+(override the schedule-fit NBA games per team per week with one flat number).
 
 ### The report
 
@@ -302,7 +309,7 @@ A week is simulated per player and summed:
 | Step | How |
 |---|---|
 | Per-game rate | Recency-weighted blend of the season/30/14/7-day windows, weighting each window by the games in it. |
-| Games played | `Binomial(4, p)`, where `p` folds in Yahoo injury status and games missed so far. |
+| Games played | `Binomial(n, p)`, `n` and `p` fit per NBA team to the real pulled schedule; `p` also folds in Yahoo injury status and games missed so far. |
 | Usage | One draw per player per week, shared across their categories, so points, rebounds and assists move together. Its spread widens as the sample behind the rate shrinks. |
 | Counting stats | Gamma matched to a per-game variance of `mean + (cv × mean)²` — a Poisson floor for rare events plus a proportional term for volume. |
 | FG% / FT% | Attempts drawn, then makes as `Binomial(attempts, form)`; team percentages pool real makes over real attempts, the way Yahoo scores them. |
@@ -313,11 +320,14 @@ scored against identical simulated weeks, and a reported gain is a real
 difference rather than two noisy numbers subtracted — top moves hold to ±0.01
 categories across seeds.
 
-Two things the snapshot cannot tell it, both surfaced as options rather than
+One thing the snapshot cannot tell it, surfaced as an option rather than
 hidden: there are no game logs, so per-game variance comes from the calibrated
-model above rather than from a player's own history; and there is no NBA
-schedule, so `--games` defaults to the league-wide average of 3.5 rather than
-counting each team's real games that week.
+model above rather than from a player's own history. Games per week used to be
+a second such gap; it is now fit per NBA team from the real pulled schedule
+(`--games` overrides it with one flat number, for a deliberate what-if) — though
+that fit is still against a *typical* week of the season rather than the
+specific dates of the current fantasy week, since the snapshot has no
+week-number-to-date-range table.
 
 The knobs live at the top of `fantasy/analysis/projection.py` — recency weights,
 per-category spread, and the availability table by injury status.
@@ -326,7 +336,8 @@ per-category spread, and the availability table by injury status.
 formula, how the constants were calibrated, a variance decomposition showing
 which categories are decided by the schedule and which by noise, and the
 limitations worth knowing before you trust a number — and a prioritised list of
-what would make the simulation better, led by pulling the real NBA schedule.
+what would make the simulation better, led by matching the real schedule to
+the specific fantasy week and backtesting against real weekly results.
 
 ### From Python
 

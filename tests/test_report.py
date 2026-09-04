@@ -160,6 +160,13 @@ check("missing settings are called out",
                                                  "waiver_type": None,
                                                  "uses_faab": None}), True)
 
+scheduled = quality(schedule_used=True, cal={"in_playoffs": False, "current_week": 5,
+                                             "playoff_start_week": 21,
+                                             "games_per_week": 3.2})
+check("a real schedule swaps the flat-assumption caveat for the week-matching one",
+      "no_schedule" in scheduled, False)
+check("...and says so", "schedule_not_week_specific" in scheduled, True)
+
 sev = {c["code"]: c["severity"] for c in report._data_quality(
     meta={}, cal={"in_playoffs": True, "current_week": 23, "playoff_start_week": 21,
                   "games_per_week": 3.5},

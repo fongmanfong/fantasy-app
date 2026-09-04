@@ -50,7 +50,7 @@ def resolve_team(con, needle: str | None) -> dict:
 
 
 def prepare(con, periods=None, sims: int = 10000, seed: int | None = 0,
-            games_per_week: float = projection.GAMES_PER_WEEK):
+            games_per_week: float | None = None):
     """
     Read the league rules, then project and simulate every player once.
 
@@ -78,7 +78,7 @@ def _category_rows(probs: dict, categories: list[dict]) -> list[dict]:
 
 def head_to_head(con, team_a: str | None = None, team_b: str | None = None,
                  periods=None, sims: int = 10000, seed: int | None = 0,
-                 games_per_week: float = projection.GAMES_PER_WEEK) -> dict:
+                 games_per_week: float | None = None) -> dict:
     """
     Simulate a week between two teams.
 
@@ -100,14 +100,14 @@ def head_to_head(con, team_a: str | None = None, team_b: str | None = None,
         "a": a, "b": b, "rules": rules,
         "categories": _category_rows(simulate.category_probs(wa, wb, cats), cats),
         **simulate.matchup_summary(wa, wb, cats),
-        "sims": sims, "games_per_week": games_per_week,
+        "sims": sims, "games_per_week": rules.games_per_week,
         "roster_size": {a["team_key"]: len(ca), b["team_key"]: len(cb)},
     }
 
 
 def versus_field(con, team_a: str | None = None, periods=None, sims: int = 10000,
                  seed: int | None = 0,
-                 games_per_week: float = projection.GAMES_PER_WEEK) -> dict:
+                 games_per_week: float | None = None) -> dict:
     """One team's week run against every other team in the league."""
     a = resolve_team(con, team_a)
     players, draws, rules = prepare(con, periods, sims, seed, games_per_week)
@@ -135,5 +135,5 @@ def versus_field(con, team_a: str | None = None, periods=None, sims: int = 10000
                        for c in cats],
         "expected_cats_won": float(np.mean([r["expected_cats_won"] for r in rows])),
         "p_win": float(np.mean([r["p_win"] for r in rows])),
-        "sims": sims, "games_per_week": games_per_week,
+        "sims": sims, "games_per_week": rules.games_per_week,
     }
