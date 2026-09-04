@@ -11,7 +11,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fantasy.rankings import _normalize
 from fantasy.sources.hashtagbasketball import parse_dynasty
 
 failures = []
@@ -91,13 +90,6 @@ check("positions empty rather than swallowing the team", veesaar["positions"], [
 check("age", veesaar["age"], 22.4)
 check("empty value span -> None rather than a crash", veesaar["extra"],
       {"keeper_rank": None, "keeper_value": None})
-
-# --- name normalization for matching against v_players ---
-
-check("case and punctuation", _normalize("Jaron Pierre Jr."), _normalize("jaron pierre"))
-check("suffix stripped", _normalize("Jaron Pierre Jr."), "jaron pierre")
-check("apostrophe stripped", _normalize("De'Aaron Fox"), "deaaron fox")
-check("hyphen stripped", _normalize("Shai Gilgeous-Alexander"), "shai gilgeousalexander")
 
 if failures:
     print(f"{len(failures)} FAILURE(S):\n")

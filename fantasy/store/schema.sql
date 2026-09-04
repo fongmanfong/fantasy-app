@@ -133,17 +133,45 @@ CREATE TABLE IF NOT EXISTS ranking_pulls (
 
 -- One row per (source, player) per pull. player_key is resolved by matching
 -- player_name against v_players at pull time and is NULL when nothing matched.
+-- player_name_key is the exact string that lookup was done on — fantasy.names
+-- .normalize(player_name), stored so an unmatched row can be debugged with plain
+-- SQL instead of re-running the Python normalizer.
 CREATE TABLE IF NOT EXISTS player_rankings (
     ranking_pull_id BIGINT NOT NULL,
     source          VARCHAR NOT NULL,
     rank            INTEGER,
     player_name     VARCHAR,
+    player_name_key VARCHAR,
     player_key      VARCHAR,
     team_abbr       VARCHAR,
     positions       VARCHAR[],
     age             DOUBLE,
     extra           VARCHAR                  -- source-specific fields as a JSON object
 );
+
+-- player_name_key was added after player_rankings already existed in some databases;
+-- CREATE TABLE IF NOT EXISTS above is a no-op against those, so bring them up to date
+-- explicitly rather than silently dropping the column on every insert from here on.
+ALTER TABLE player_rankings ADD COLUMN IF NOT EXISTS player_name_key VARCHAR;
+
+-- name_key() standardizes a name for matching or search: lowercase, accents folded to
+-- ASCII, punctuation and a Jr./Sr./II-V suffix dropped. It mirrors the first two-thirds
+-- of fantasy.names.normalize() in pure SQL so it works from any DuckDB session — a
+-- macro, unlike a Python UDF, needs no per-connection registration to be queryable.
+-- It deliberately stops short of normalize()'s nickname table (e.g. Nic/Nicolas):
+-- that's a matching-time judgment call, not a property of the name itself, and stays
+-- in fantasy/rankings.py where a wrong guess can be reviewed rather than baked into
+-- every query. Keep the two in sync if either changes.
+CREATE OR REPLACE MACRO name_key(name) AS
+    regexp_replace(
+        trim(
+            regexp_replace(
+                regexp_replace(lower(strip_accents(name)), '[.''-]', '', 'g'),
+                '\b(jr|sr|ii|iii|iv|v)\b', '', 'g'
+            )
+        ),
+        '\s+', ' ', 'g'
+    );
 
 -- --- Views: the newest successful pull per league ---
 
@@ -169,7 +197,8 @@ CREATE OR REPLACE VIEW v_teams AS
 SELECT t.* FROM teams t JOIN latest_pull p USING (league_key, pull_id);
 
 CREATE OR REPLACE VIEW v_players AS
-SELECT pl.* FROM players pl JOIN latest_pull p USING (league_key, pull_id);
+SELECT pl.*, name_key(pl.full_name) AS full_name_key
+FROM players pl JOIN latest_pull p USING (league_key, pull_id);
 
 CREATE OR REPLACE VIEW v_rosters AS
 SELECT r.* FROM rosters r JOIN latest_pull p USING (league_key, pull_id);
@@ -188,6 +217,7 @@ SELECT
     r.selected_position,
     p.player_key,
     p.full_name,
+    p.full_name_key,
     p.editorial_team_abbr,
     p.positions,
     p.status,
@@ -206,6 +236,7 @@ SELECT
     r.league_key,
     p.player_key,
     p.full_name,
+    p.full_name_key,
     p.editorial_team_abbr,
     p.positions,
     p.status,

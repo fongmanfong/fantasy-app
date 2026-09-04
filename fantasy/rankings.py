@@ -6,9 +6,9 @@ pull happens on its own cadence and isn't specific to one Yahoo league.
 """
 import json
 import logging
-import re
 from dataclasses import dataclass
 
+from .names import normalize
 from .sources import SOURCES, fetch
 from .store import db
 
@@ -29,24 +29,6 @@ class RankingPullResult:
         return "error" if self.error else "success"
 
 
-_SUFFIX = re.compile(r"\b(jr|sr|ii|iii|iv|v)\b")
-_PUNCT = re.compile(r"[.'\-]")
-
-
-def _normalize(name: str) -> str:
-    """
-    Loose match key for joining a scraped name against v_players.full_name.
-
-    Sites and Yahoo don't always agree on punctuation or a "Jr." suffix; this closes
-    that gap without attempting anything fuzzier (no edit distance), so a genuine
-    mismatch — a nickname, a different transliteration — is left unmatched rather than
-    silently paired with the wrong player.
-    """
-    name = _PUNCT.sub("", name.lower())
-    name = _SUFFIX.sub("", name)
-    return " ".join(name.split())
-
-
 def _match_players(con) -> dict[str, str]:
     """normalized full_name -> player_key, from the latest league snapshot."""
     try:
@@ -56,7 +38,7 @@ def _match_players(con) -> dict[str, str]:
     out: dict[str, str] = {}
     for full_name, player_key in rows:
         if full_name and player_key:
-            out.setdefault(_normalize(full_name), player_key)
+            out.setdefault(normalize(full_name), player_key)
     return out
 
 
@@ -86,7 +68,8 @@ def run(source: str, url: str | None = None) -> RankingPullResult:
 
         payload = []
         for row in rows:
-            player_key = by_name.get(_normalize(row["player_name"]))
+            name_key = normalize(row["player_name"])
+            player_key = by_name.get(name_key)
             if player_key:
                 result.matched += 1
             payload.append({
@@ -94,6 +77,7 @@ def run(source: str, url: str | None = None) -> RankingPullResult:
                 "source": source,
                 "rank": row.get("rank"),
                 "player_name": row.get("player_name"),
+                "player_name_key": name_key,
                 "player_key": player_key,
                 "team_abbr": row.get("team_abbr"),
                 "positions": row.get("positions") or [],
