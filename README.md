@@ -179,14 +179,15 @@ else's roster), `--periods` (which stat windows to blend), and `--games`
 ### The report
 
 ```sh
-fantasy report                    # writes reports/2025-W23.md
+fantasy report                    # overwrites reports/summary.md
 fantasy report --out -            # to stdout instead
-fantasy report --out week.md      # somewhere specific
+fantasy report --out week23.md    # a dated copy, kept alongside it
 ```
 
-Reports land in `reports/`, one file per league week and overwritten within it,
-so successive runs build a series you can diff to see what actually changed on
-your roster and in the league. The directory is gitignored.
+By default every run overwrites the same `reports/summary.md`, so there is
+always one current report at a known path — the right default for something an
+agent reads without knowing which week it is. Pass `--out` with a name of your
+own to keep a dated history instead; `reports/` is gitignored either way.
 
 `fantasy report` composes the whole picture into one markdown document: your
 roster, your category profile against the league, the standings, the waiver

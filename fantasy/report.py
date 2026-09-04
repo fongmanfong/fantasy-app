@@ -34,6 +34,12 @@ from .analysis import matchup, projection, waiver
 # three changes.
 SCHEMA_VERSION = 1
 
+# Where a report lands when no path is given. A single stable file, overwritten
+# each run, so anything reading these reports — an agent especially — has one
+# path to look at rather than having to work out which week is current. Pass an
+# explicit --out to keep a dated copy alongside it.
+DEFAULT_OUT = Path("reports/summary.md")
+
 # Categories the model treats as mostly per-game randomness — 73-77% of their
 # variance, per the decomposition in docs/ALGORITHMS.md. A strong rank in these
 # is much less bankable than the same rank elsewhere, so the report flags them
@@ -407,23 +413,6 @@ def build(con, team: str | None = None, sims: int = 10000, seed: int = 0,
         "research": _research_targets(roster["players"], projected,
                                       moves["best_by_player"], profile),
     }
-
-
-def default_path(data: dict, root="reports") -> Path:
-    """
-    Where a report lands when no path is given: `reports/<season>-W<week>.md`.
-
-    One file per league week, deliberately overwritten within it — the point is
-    a week-over-week series you can diff, not an archive of every invocation.
-    Falls back to the generation date when the snapshot has no calendar.
-    """
-    league = data["league"]
-    season, week = league.get("season"), league.get("current_week")
-    parts = [str(season)] if season is not None else []
-    if week is not None:
-        parts.append(f"W{week}")
-    stem = "-".join(parts) or data["generated_at"][:10]
-    return Path(root) / f"{stem}.md"
 
 
 # --- render -------------------------------------------------------------

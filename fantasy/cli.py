@@ -450,7 +450,7 @@ def waivers_cmd(
 def report_cmd(
     team: str = typer.Option(None, "--team", help="Team to report on. Default: yours."),
     out: str = typer.Option(None, "--out", help="Where to write. Default: "
-                            "reports/<season>-W<week>.md. Use - for stdout."),
+                            f"{report_mod.DEFAULT_OUT}. Use - for stdout."),
     sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
     games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
                                 help="Average NBA games per team per week."),
@@ -461,10 +461,10 @@ def report_cmd(
     """
     Write a standing report on the league, for a person or an agent to read.
 
-    Writes `reports/<season>-W<week>.md` by default — one file per league week,
-    so successive runs build a series you can diff. `--out -` sends it to stdout
-    instead. Progress and errors go to stderr either way, so a redirect always
-    yields a clean document.
+    Overwrites `reports/summary.md` by default, so there is always one current
+    report at a known path. `--out -` sends it to stdout instead, and an
+    explicit path keeps a dated copy. Progress and errors go to stderr either
+    way, so a redirect always yields a clean document.
     """
     try:
         # The spinner must not touch stdout — `console` is bound to it, and a
@@ -483,7 +483,7 @@ def report_cmd(
         sys.stdout.write(text)
         return
 
-    path = Path(out) if out else report_mod.default_path(data)
+    path = Path(out) if out else report_mod.DEFAULT_OUT
     # Create the directory rather than throwing away a simulation that already
     # ran, and report a write failure the way every other command reports one
     # instead of unwinding a traceback over the report.

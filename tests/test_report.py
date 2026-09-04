@@ -277,14 +277,8 @@ FIXTURE = {
     "research": res,
 }
 
-check("a report lands under reports/, named for its league week",
-      str(report.default_path(FIXTURE)), "reports/2025-W23.md")
-check("a snapshot with no week still gets a stable name",
-      str(report.default_path(dict(FIXTURE, league={"season": 2025}))),
-      "reports/2025.md")
-check("and one with no calendar at all falls back to the generation date",
-      str(report.default_path(dict(FIXTURE, league={}))), "reports/2026-09-04.md")
-check("the root is overridable", str(report.default_path(FIXTURE, "x")), "x/2025-W23.md")
+check("the default destination is a single stable file under reports/",
+      str(report.DEFAULT_OUT), "reports/summary.md")
 
 doc = report.render_markdown(FIXTURE)
 lines = doc.splitlines()

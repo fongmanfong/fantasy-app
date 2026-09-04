@@ -62,13 +62,12 @@ look up — that section names the players where outside information actually
 changes the answer, ranked by how little the model knows about them.
 
 ```sh
-.venv/bin/fantasy report          # writes reports/<season>-W<week>.md
+.venv/bin/fantasy report          # overwrites reports/summary.md
 .venv/bin/fantasy report --out -  # to stdout instead
 ```
 
-Reports accumulate in `reports/` (gitignored), one per league week. If an
-earlier week is present, diffing it against the current one is the fastest way
-to see what actually changed.
+`reports/summary.md` is always the current report at a fixed, known path —
+read it directly rather than guessing a filename. `reports/` is gitignored.
 
 The rest of the CLI answers narrower questions:
 
