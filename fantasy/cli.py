@@ -9,9 +9,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import config, pull as pull_mod, report as report_mod, server as server_mod
+from . import config, pull as pull_mod, rankings as rankings_mod, report as report_mod, server as server_mod
 from .analysis import (matchup as matchup_mod, projection,
                        rules as rules_mod, waiver as waiver_mod)
+from .sources import SOURCES
 from .store import db
 from .store.db import NoDatabase
 from .yahoo import auth
@@ -20,6 +21,8 @@ from .yahoo.client import STAT_PERIODS, YahooClient
 app = typer.Typer(add_completion=False, help=__doc__, no_args_is_help=True)
 auth_app = typer.Typer(help="Authenticate with Yahoo.", no_args_is_help=True)
 app.add_typer(auth_app, name="auth")
+rankings_app = typer.Typer(help="Pull external player rankings into DuckDB.", no_args_is_help=True)
+app.add_typer(rankings_app, name="rankings")
 
 console = Console()
 err = Console(stderr=True)
@@ -515,6 +518,76 @@ def sql_cmd(
 
     shown = rows if limit == 0 else rows[:limit]
     render(shown, headers)
+    if len(shown) < len(rows):
+        console.print(f"[dim]{len(shown)} of {len(rows)} rows — raise with --limit 0[/dim]")
+
+
+# --- rankings -------------------------------------------------------------
+
+@rankings_app.command("sources")
+def rankings_sources_cmd():
+    """List the ranking sites this app knows how to scrape."""
+    render(
+        [(name, src.url) for name, src in sorted(SOURCES.items())],
+        ["source", "default url"],
+        title="Ranking sources",
+    )
+
+
+@rankings_app.command("pull")
+def rankings_pull_cmd(
+    source: str = typer.Argument(..., help=f"Source to pull. One of: {', '.join(SOURCES)}"),
+    url: str = typer.Option(None, "--url", help="Override the source's default URL."),
+):
+    """Scrape a ranking site and append it to the database."""
+    try:
+        with console.status(f"[cyan]fetching {source}[/cyan]"):
+            result = rankings_mod.run(source, url)
+    except Exception as exc:
+        fail(str(exc))
+
+    if result.error:
+        fail(f"{source} pull failed: {result.error}")
+
+    console.print(
+        f"\n[green]Ranking pull #{result.ranking_pull_id}[/green] {source} "
+        f"— {result.rows} players, {result.matched} matched to your league snapshot"
+    )
+    if result.matched < result.rows:
+        console.print(
+            f"[dim]{result.rows - result.matched} unmatched — likely a name spelled "
+            "differently than Yahoo's, or a player outside your league snapshot.[/dim]"
+        )
+
+
+@rankings_app.command("show")
+def rankings_show_cmd(
+    source: str = typer.Argument(..., help=f"Source to show. One of: {', '.join(SOURCES)}"),
+    limit: int = typer.Option(25, "--limit", help="Rows to show. 0 for all."),
+):
+    """Show the latest pull for a ranking source."""
+    try:
+        with db.connect(read_only=True) as con:
+            rows = con.execute(
+                "SELECT rank, player_name, team_abbr, positions, player_key "
+                "FROM v_player_rankings WHERE source = ? ORDER BY rank",
+                [source],
+            ).fetchall()
+    except NoDatabase as exc:
+        fail(str(exc))
+
+    if not rows:
+        console.print(f"[yellow]No rankings stored for {source!r} yet.[/yellow] "
+                      f"Run `fantasy rankings pull {source}`.")
+        return
+
+    shown = rows if limit == 0 else rows[:limit]
+    render(
+        [(r, name, team or "-", "/".join(pos or []), key or "[dim]unmatched[/dim]")
+         for r, name, team, pos, key in shown],
+        ["rank", "player", "team", "pos", "player_key"],
+        title=f"{source} — latest pull",
+    )
     if len(shown) < len(rows):
         console.print(f"[dim]{len(shown)} of {len(rows)} rows — raise with --limit 0[/dim]")
 

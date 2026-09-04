@@ -70,6 +70,9 @@ fantasy report                       # one standing report, for you or an agent
 | `fantasy waivers` | Rank free-agent add/drops by how much they move the odds. |
 | `fantasy report` | One standing markdown report over everything above. |
 | `fantasy sql "<query>"` | Run ad-hoc SQL. |
+| `fantasy rankings sources` | List the ranking sites this app knows how to scrape. |
+| `fantasy rankings pull SOURCE` | Scrape a ranking site and append it to the database. |
+| `fantasy rankings show SOURCE` | Show the latest pull for a ranking source. |
 
 `pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
 `--fa-limit N` (cap the free-agent pool; default is the whole pool).
@@ -106,6 +109,41 @@ GET /api/compare?a=<key>&b=<key>       head-to-head across the nine categories
 A failing step is recorded against the pull and the rest continues, so a single bad roster
 call does not lose the snapshot. Such a pull is marked `partial`.
 
+## External rankings
+
+Independent of the Yahoo snapshot, `fantasy rankings` scrapes named ranking sites and
+appends the result to DuckDB on its own history — useful for comparing the model's
+output against outside opinion, or feeding a ranking into analysis later.
+
+```sh
+fantasy rankings sources               # sites this app knows how to scrape
+fantasy rankings pull hashtag_dynasty  # fetch + parse + store
+fantasy rankings show hashtag_dynasty  # the latest pull, ranked
+```
+
+Each pull is matched against `v_players` by name and stamped with `player_key` where a
+confident match is found (case/punctuation/suffix-insensitive, no fuzzy matching — a
+genuine spelling mismatch is left unmatched rather than silently paired with the wrong
+player). `fantasy rankings pull` reports how many rows matched; the rest are typically
+players outside your league's snapshot rather than a matching bug.
+
+A source is a pure `parse(html) -> list[dict]` function registered in
+`fantasy/sources/__init__.py`; the network fetch is shared. Add a new site by writing
+one module next to `fantasy/sources/hashtagbasketball.py` and registering it — nothing
+else changes. Because each parser reads one site's actual template, it is scrape code
+tied to a specific site's markup, not a generic table scraper — expect it to need a
+one-file fix if that site redesigns its rankings page.
+
+```sql
+-- Rankings joined against your roster
+SELECT r.rank, r.player_name, r.team_abbr, p.selected_position
+FROM v_player_rankings r
+LEFT JOIN v_roster_players p USING (player_key)
+WHERE r.source = 'hashtag_dynasty'
+ORDER BY r.rank
+LIMIT 20;
+```
+
 ## Schema
 
 Snapshot tables — every row carries `pull_id` and `league_key`:
@@ -129,6 +167,15 @@ every time. Use DuckDB's `PIVOT` when you want it wide.
 Views resolving to the latest pull: `v_leagues`, `v_league_settings`, `v_stat_categories`,
 `v_roster_positions`, `v_teams`, `v_players`, `v_rosters`, `v_player_stats`,
 `v_roster_players`, `v_my_team`, `v_free_agents`.
+
+Ranking tables, on their own pull sequence (not tied to a `league_key`):
+
+| Table | Contents |
+|---|---|
+| `ranking_pulls` | One row per `fantasy rankings pull`: source, URL, timestamp, status. |
+| `player_rankings` | One row per (source, player): rank, name, team, positions, age, `player_key` if matched, and source-specific fields as JSON in `extra`. |
+
+`v_player_rankings` resolves to the latest successful pull per source.
 
 ## Analysis
 
@@ -288,6 +335,7 @@ fantasy/
 ├── config.py         # env + paths
 ├── pull.py           # snapshot orchestration
 ├── query.py          # read-side queries over the latest snapshot
+├── rankings.py       # scrape a ranking site, match players, append to DuckDB
 ├── report.py         # composes the whole picture into one markdown document
 ├── server.py         # local JSON API + app host
 ├── analysis/
@@ -296,6 +344,9 @@ fantasy/
 │   ├── simulate.py   # Monte Carlo engine, one column per player
 │   ├── matchup.py    # head-to-head and against-the-field odds
 │   └── waiver.py     # free-agent add/drop search
+├── sources/
+│   ├── fetch.py             # shared HTTP GET for ranking sites
+│   └── hashtagbasketball.py # pure HTML → rows parser, one file per site
 ├── templates/
 │   └── app.html      # the interface
 ├── yahoo/
@@ -311,14 +362,16 @@ docs/
 ```
 
 `tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures,
-`tests/test_analysis.py` the simulation math against hand-built players, and
+`tests/test_analysis.py` the simulation math against hand-built players,
 `tests/test_report.py` the report's formatting and derivations against a fixture
-document. None touches the network or the database:
+document, and `tests/test_rankings.py` the ranking-site scraper against saved HTML
+fixtures. None touches the network or the database:
 
 ```sh
 .venv/bin/python tests/test_parse.py
 .venv/bin/python tests/test_analysis.py
 .venv/bin/python tests/test_report.py
+.venv/bin/python tests/test_rankings.py
 ```
 
 ## Notes
