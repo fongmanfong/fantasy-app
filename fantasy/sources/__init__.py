@@ -20,7 +20,7 @@ hashtagbasketball.py and registering it below — nothing else in the app change
 from dataclasses import dataclass
 from typing import Callable
 
-from . import hashtagbasketball
+from . import dynatyze, hashtagbasketball
 
 
 @dataclass(frozen=True)
@@ -33,5 +33,9 @@ SOURCES: dict[str, Source] = {
     "hashtag_dynasty": Source(
         url=hashtagbasketball.DYNASTY_URL,
         parse=hashtagbasketball.parse_dynasty,
+    ),
+    "dynatyze_dynasty": Source(
+        url=dynatyze.DYNASTY_URL,
+        parse=dynatyze.parse_dynasty,
     ),
 }
