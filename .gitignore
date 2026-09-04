@@ -6,6 +6,10 @@ __pycache__/
 build/
 dist/
 
+# Agent worktrees — full repo copies, database included.
+# Left narrow so a committed .claude/settings.json stays possible.
+.claude/worktrees/
+
 # Data
 data/
 *.duckdb
