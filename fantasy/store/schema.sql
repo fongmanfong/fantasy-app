@@ -117,6 +117,34 @@ CREATE TABLE IF NOT EXISTS player_stats (
     raw_value   VARCHAR
 );
 
+-- External player rankings, pulled from sites named in fantasy/sources/. Kept on its
+-- own pull sequence, separate from `pulls`/league snapshot tables, because a ranking
+-- pull happens on its own cadence and isn't tied to a specific Yahoo league.
+CREATE SEQUENCE IF NOT EXISTS ranking_pull_id_seq START 1;
+
+CREATE TABLE IF NOT EXISTS ranking_pulls (
+    ranking_pull_id BIGINT PRIMARY KEY,
+    source          VARCHAR NOT NULL,
+    source_url      VARCHAR NOT NULL,
+    pulled_at       TIMESTAMP NOT NULL,
+    status          VARCHAR NOT NULL,        -- running | success | error
+    note            VARCHAR
+);
+
+-- One row per (source, player) per pull. player_key is resolved by matching
+-- player_name against v_players at pull time and is NULL when nothing matched.
+CREATE TABLE IF NOT EXISTS player_rankings (
+    ranking_pull_id BIGINT NOT NULL,
+    source          VARCHAR NOT NULL,
+    rank            INTEGER,
+    player_name     VARCHAR,
+    player_key      VARCHAR,
+    team_abbr       VARCHAR,
+    positions       VARCHAR[],
+    age             DOUBLE,
+    extra           VARCHAR                  -- source-specific fields as a JSON object
+);
+
 -- --- Views: the newest successful pull per league ---
 
 CREATE OR REPLACE VIEW latest_pull AS
@@ -186,3 +214,14 @@ SELECT
 FROM v_rosters r
 JOIN v_players p USING (league_key, player_key)
 WHERE r.is_free_agent;
+
+-- --- Views: the newest successful pull per ranking source ---
+
+CREATE OR REPLACE VIEW latest_ranking_pull AS
+SELECT source, max(ranking_pull_id) AS ranking_pull_id
+FROM ranking_pulls
+WHERE status = 'success'
+GROUP BY source;
+
+CREATE OR REPLACE VIEW v_player_rankings AS
+SELECT r.* FROM player_rankings r JOIN latest_ranking_pull p USING (source, ranking_pull_id);

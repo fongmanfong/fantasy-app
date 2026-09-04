@@ -61,6 +61,38 @@ def complete_pull(con, pull_id: int, status: str, note: str | None = None) -> No
     )
 
 
+def new_ranking_pull(con, source: str, source_url: str) -> int:
+    ranking_pull_id = con.execute("SELECT nextval('ranking_pull_id_seq')").fetchone()[0]
+    con.execute(
+        "INSERT INTO ranking_pulls (ranking_pull_id, source, source_url, pulled_at, status) "
+        "VALUES (?, ?, ?, ?, 'running')",
+        [ranking_pull_id, source, source_url, datetime.now(timezone.utc)],
+    )
+    return ranking_pull_id
+
+
+def complete_ranking_pull(con, ranking_pull_id: int, status: str, note: str | None = None) -> None:
+    con.execute(
+        "UPDATE ranking_pulls SET status = ?, note = ? WHERE ranking_pull_id = ?",
+        [status, note, ranking_pull_id],
+    )
+
+
+def insert_ranking_rows(con, rows: list[dict]) -> int:
+    """Like insert_rows, but player_rankings rows already carry their own
+    ranking_pull_id/source rather than a shared pull_id/league_key stamp."""
+    if not rows:
+        return 0
+    cols = columns_of(con, "player_rankings")
+    placeholders = ", ".join("?" for _ in cols)
+    payload = [[row.get(c) for c in cols] for row in rows]
+    con.executemany(
+        f"INSERT INTO player_rankings ({', '.join(cols)}) VALUES ({placeholders})",
+        payload,
+    )
+    return len(payload)
+
+
 def columns_of(con, table: str) -> list[str]:
     return [r[1] for r in con.execute(f"PRAGMA table_info('{table}')").fetchall()]
 
