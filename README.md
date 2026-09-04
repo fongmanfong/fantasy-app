@@ -52,6 +52,7 @@ fantasy view                         # open the league interface in your browser
 fantasy rules                        # what the model reads, and what it assumes
 fantasy matchup "Guan Yu"            # your odds in each category against them
 fantasy waivers                      # free-agent pickups ranked by odds bought
+fantasy report > week.md             # one standing report, for you or an agent
 ```
 
 | Command | Description |
@@ -67,6 +68,7 @@ fantasy waivers                      # free-agent pickups ranked by odds bought
 | `fantasy rules` | League rules the model runs under, and what it had to assume. |
 | `fantasy matchup [TEAM]` | Win probability per category against a team, or the whole league. |
 | `fantasy waivers` | Rank free-agent add/drops by how much they move the odds. |
+| `fantasy report` | One standing markdown report over everything above. |
 | `fantasy sql "<query>"` | Run ad-hoc SQL. |
 
 `pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
@@ -174,6 +176,29 @@ Both commands share options: `--sims`, `--seed`, `--team` (analyse someone
 else's roster), `--periods` (which stat windows to blend), and `--games`
 (NBA games per team per week).
 
+### The report
+
+```sh
+fantasy report                  # to stdout
+fantasy report --out week.md    # to a file
+```
+
+`fantasy report` composes the whole picture into one markdown document: your
+roster, your category profile against the league, the standings, the waiver
+board, the model's assumptions, and — the part that makes it more than a dump —
+**a generated list of what to go research**, ranked by where the model is least
+certain. A player with an eleven-game sample sitting on IL is exactly where an
+injury report changes the answer, and the report says so by name.
+
+It is built to be handed to an agent that will pair it with news the snapshot
+cannot contain. Every table names its units, every probability arrives with the
+assumptions behind it, and the front-matter carries `report_version` plus
+machine-readable `data_quality` codes so a reader can branch on what is wrong
+with the snapshot without parsing prose.
+
+Output goes to stdout so it pipes; progress and errors go to stderr, so a
+redirect always yields a clean document.
+
 ### The model
 
 A week is simulated per player and summed:
@@ -257,6 +282,7 @@ fantasy/
 ├── config.py         # env + paths
 ├── pull.py           # snapshot orchestration
 ├── query.py          # read-side queries over the latest snapshot
+├── report.py         # composes the whole picture into one markdown document
 ├── server.py         # local JSON API + app host
 ├── analysis/
 │   ├── rules.py      # league rules read from the snapshot; refuses what it can't model
@@ -278,13 +304,15 @@ docs/
 └── ALGORITHMS.md     # the model, its calibration, and its limits
 ```
 
-`tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures, and
-`tests/test_analysis.py` the simulation math against hand-built players. Neither
-touches the network or the database:
+`tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures,
+`tests/test_analysis.py` the simulation math against hand-built players, and
+`tests/test_report.py` the report's formatting and derivations against a fixture
+document. None touches the network or the database:
 
 ```sh
 .venv/bin/python tests/test_parse.py
 .venv/bin/python tests/test_analysis.py
+.venv/bin/python tests/test_report.py
 ```
 
 ## Notes

@@ -1,13 +1,15 @@
 """`fantasy` — pull a Yahoo Fantasy NBA league into DuckDB and query it."""
 import logging
+import sys
 import webbrowser
+from pathlib import Path
 from datetime import datetime, timezone
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import config, pull as pull_mod, server as server_mod
+from . import config, pull as pull_mod, report as report_mod, server as server_mod
 from .analysis import (matchup as matchup_mod, projection,
                        rules as rules_mod, waiver as waiver_mod)
 from .store import db
@@ -442,6 +444,44 @@ def waivers_cmd(
             for d in r["drop_candidates"]],
            ["droppable", "pos", "slot", "cost (cats)"],
            title="Cheapest to drop")
+
+
+@app.command("report")
+def report_cmd(
+    team: str = typer.Option(None, "--team", help="Team to report on. Default: yours."),
+    out: Path = typer.Option(None, "--out", help="Write to a file. Default: stdout."),
+    sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
+    games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
+                                help="Average NBA games per team per week."),
+    seed: int = typer.Option(0, "--seed", help="Random seed."),
+    min_gp: float = typer.Option(5.0, "--min-gp", help="Ignore free agents below this many games."),
+    top: int = typer.Option(10, "--top", help="Free agents to rank."),
+):
+    """
+    Write a standing report on the league, for a person or an agent to read.
+
+    Goes to stdout so it pipes; `--out` writes a file. Progress and errors go to
+    stderr, so `fantasy report > week.md` gives a clean document either way.
+    """
+    try:
+        # The spinner must not touch stdout — `console` is bound to it, and a
+        # spinner frame in the middle of a markdown table would corrupt the file.
+        with err.status("[cyan]building report[/cyan]"):
+            with db.connect(read_only=True) as con:
+                data = report_mod.build(con, team=team, sims=sims, seed=seed,
+                                        games_per_week=games, top=top, min_gp=min_gp)
+        text = report_mod.render_markdown(data)
+    except (NoDatabase, RuntimeError) as exc:
+        fail(str(exc))
+
+    if out:
+        out.write_text(text)
+        err.print(f"[green]Wrote[/green] {out} "
+                  f"[dim]({len(text.splitlines()):,} lines)[/dim]")
+    else:
+        # Deliberately not console.print: rich would wrap the tables to terminal
+        # width, parse [...] as markup and syntax-highlight the result.
+        sys.stdout.write(text)
 
 
 @app.command("sql")

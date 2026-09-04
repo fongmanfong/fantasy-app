@@ -53,10 +53,22 @@ Four things about it will mislead you if you do not know them:
 
 ## Driving the analysis
 
-The CLI is the fast path:
+**If you are here to assess the team and recommend moves, start with
+`fantasy report`.** It is the front door: one markdown document carrying the
+roster, the category profile, the standings, the waiver board, the model's
+assumptions, and a generated list of what to research externally. Read its
+section 1 before quoting any number from it, and section 7 to decide what to go
+look up — that section names the players where outside information actually
+changes the answer, ranked by how little the model knows about them.
 
 ```sh
-.venv/bin/fantasy rules                      # what the model reads vs assumes — run this first
+.venv/bin/fantasy report > week.md      # the whole picture, for an agent to read
+```
+
+The rest of the CLI answers narrower questions:
+
+```sh
+.venv/bin/fantasy rules                      # what the model reads vs assumes
 .venv/bin/fantasy matchup "Guan Yu"          # per-category odds against one team
 .venv/bin/fantasy matchup                    # against all 11 opponents
 .venv/bin/fantasy waivers --vs Starboy       # add/drops for one matchup
