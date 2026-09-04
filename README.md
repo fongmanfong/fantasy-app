@@ -1,4 +1,4 @@
-# fantasy
+# FantasyGPT
 
 A command-line tool that pulls your Yahoo Fantasy NBA league's current state into a
 [DuckDB](https://duckdb.org) database so you can query it with SQL.
