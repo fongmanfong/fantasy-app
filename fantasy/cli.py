@@ -9,10 +9,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import config, pull as pull_mod, rankings as rankings_mod, report as report_mod, server as server_mod
+from . import config, pull as pull_mod, rankings as rankings_mod, report as report_mod, schedule as schedule_mod, server as server_mod
 from .analysis import (matchup as matchup_mod, projection,
                        rules as rules_mod, waiver as waiver_mod)
-from .sources import SOURCES
+from .sources.rankings import SOURCES
+from .sources.schedule import client as nba_client
 from .store import db
 from .store.db import NoDatabase
 from .yahoo import auth
@@ -23,6 +24,8 @@ auth_app = typer.Typer(help="Authenticate with Yahoo.", no_args_is_help=True)
 app.add_typer(auth_app, name="auth")
 rankings_app = typer.Typer(help="Pull external player rankings into DuckDB.", no_args_is_help=True)
 app.add_typer(rankings_app, name="rankings")
+schedule_app = typer.Typer(help="Pull the NBA game schedule into DuckDB.", no_args_is_help=True)
+app.add_typer(schedule_app, name="schedule")
 
 console = Console()
 err = Console(stderr=True)
@@ -587,6 +590,63 @@ def rankings_show_cmd(
          for r, name, team, pos, key in shown],
         ["rank", "player", "team", "pos", "player_key"],
         title=f"{source} — latest pull",
+    )
+    if len(shown) < len(rows):
+        console.print(f"[dim]{len(shown)} of {len(rows)} rows — raise with --limit 0[/dim]")
+
+
+# --- schedule ---------------------------------------------------------------
+
+@schedule_app.command("pull")
+def schedule_pull_cmd(
+    season: str = typer.Argument(None, help="NBA season, e.g. '2026-27'. "
+                                 "Default: inferred from today's date."),
+):
+    """Fetch the NBA game schedule and append it to the database."""
+    with console.status("[cyan]fetching schedule[/cyan]") as status:
+        result = schedule_mod.run(season, on_step=lambda msg: status.update(f"[cyan]{msg}[/cyan]"))
+
+    if result.error:
+        fail(f"{result.season} schedule pull failed: {result.error}")
+
+    console.print(
+        f"\n[green]Schedule pull #{result.pull_id}[/green] {result.season} "
+        f"— {result.games} games"
+    )
+
+
+@schedule_app.command("show")
+def schedule_show_cmd(
+    season: str = typer.Option(None, "--season", help="Default: inferred from today's date."),
+    team: str = typer.Option(None, "--team", help="Filter to one NBA team, e.g. BOS."),
+    limit: int = typer.Option(25, "--limit", help="Rows to show. 0 for all."),
+):
+    """Show the latest pulled schedule for a season."""
+    season = season or nba_client.current_season()
+    query = ("SELECT game_date, home_team, away_team, game_label "
+              "FROM v_nba_schedule WHERE season = ?")
+    params = [season]
+    if team:
+        query += " AND (home_team = ? OR away_team = ?)"
+        params += [team.upper(), team.upper()]
+    query += " ORDER BY game_date"
+
+    try:
+        with db.connect(read_only=True) as con:
+            rows = con.execute(query, params).fetchall()
+    except NoDatabase as exc:
+        fail(str(exc))
+
+    if not rows:
+        console.print(f"[yellow]No schedule stored for {season!r} yet.[/yellow] "
+                      f"Run `fantasy schedule pull {season}`.")
+        return
+
+    shown = rows if limit == 0 else rows[:limit]
+    render(
+        [(d, h, a, lbl or "-") for d, h, a, lbl in shown],
+        ["date", "home", "away", "label"],
+        title=f"{season} schedule" + (f" — {team.upper()}" if team else ""),
     )
     if len(shown) < len(rows):
         console.print(f"[dim]{len(shown)} of {len(rows)} rows — raise with --limit 0[/dim]")

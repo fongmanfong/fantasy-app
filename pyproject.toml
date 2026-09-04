@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=1.26",
     "requests>=2.31",
     "requests-oauthlib>=2.0",
+    "nba_api>=1.4",
     "typer>=0.12",
     "rich>=13.7",
     "python-dotenv>=1.0",

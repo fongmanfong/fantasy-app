@@ -1,7 +1,7 @@
 """
 The dynatyze.com scraper, with no network.
 
-Fixture mirrors the real page's embedded JSON-LD (see fantasy/sources/dynatyze.py):
+Fixture mirrors the real page's embedded JSON-LD (see fantasy/sources/rankings/dynatyze.py):
 an ItemList of Person entries (players) with draft picks omitted as a non-Person
 entity, inside a @graph that also carries an unrelated WebPage node. Ranks 1 and 3
 (a gap at 2, standing in for an omitted pick) mirror the real page's numbering.
@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fantasy.sources.dynatyze import parse_dynasty
+from fantasy.sources.rankings.dynatyze import parse_dynasty
 
 failures = []
 

@@ -93,6 +93,40 @@ def insert_ranking_rows(con, rows: list[dict]) -> int:
     return len(payload)
 
 
+def new_schedule_pull(con, season: str) -> int:
+    pull_id = con.execute("SELECT nextval('nba_schedule_pull_id_seq')").fetchone()[0]
+    con.execute(
+        "INSERT INTO nba_schedule_pulls (pull_id, season, pulled_at, status) "
+        "VALUES (?, ?, ?, 'running')",
+        [pull_id, season, datetime.now(timezone.utc)],
+    )
+    return pull_id
+
+
+def complete_schedule_pull(con, pull_id: int, status: str, note: str | None = None) -> None:
+    con.execute(
+        "UPDATE nba_schedule_pulls SET status = ?, note = ? WHERE pull_id = ?",
+        [status, note, pull_id],
+    )
+
+
+def insert_schedule_rows(con, rows: list[dict], pull_id: int, season: str) -> int:
+    """Like insert_rows, but stamps pull_id/season rather than pull_id/league_key."""
+    if not rows:
+        return 0
+    cols = columns_of(con, "nba_schedule")
+    placeholders = ", ".join("?" for _ in cols)
+    payload = []
+    for row in rows:
+        stamped = {**row, "pull_id": pull_id, "season": season}
+        payload.append([stamped.get(c) for c in cols])
+    con.executemany(
+        f"INSERT INTO nba_schedule ({', '.join(cols)}) VALUES ({placeholders})",
+        payload,
+    )
+    return len(payload)
+
+
 def columns_of(con, table: str) -> list[str]:
     return [r[1] for r in con.execute(f"PRAGMA table_info('{table}')").fetchall()]
 
