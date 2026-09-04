@@ -1,13 +1,15 @@
 """`fantasy` — pull a Yahoo Fantasy NBA league into DuckDB and query it."""
 import logging
+import sys
 import webbrowser
+from pathlib import Path
 from datetime import datetime, timezone
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import config, pull as pull_mod, server as server_mod
+from . import config, pull as pull_mod, report as report_mod, server as server_mod
 from .analysis import (matchup as matchup_mod, projection,
                        rules as rules_mod, waiver as waiver_mod)
 from .store import db
@@ -442,6 +444,56 @@ def waivers_cmd(
             for d in r["drop_candidates"]],
            ["droppable", "pos", "slot", "cost (cats)"],
            title="Cheapest to drop")
+
+
+@app.command("report")
+def report_cmd(
+    team: str = typer.Option(None, "--team", help="Team to report on. Default: yours."),
+    out: str = typer.Option(None, "--out", help="Where to write. Default: "
+                            f"{report_mod.DEFAULT_OUT}. Use - for stdout."),
+    sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
+    games: float = typer.Option(projection.GAMES_PER_WEEK, "--games",
+                                help="Average NBA games per team per week."),
+    seed: int = typer.Option(0, "--seed", help="Random seed."),
+    min_gp: float = typer.Option(5.0, "--min-gp", help="Ignore free agents below this many games."),
+    top: int = typer.Option(10, "--top", help="Free agents to rank."),
+):
+    """
+    Write a standing report on the league, for a person or an agent to read.
+
+    Overwrites `reports/summary.md` by default, so there is always one current
+    report at a known path. `--out -` sends it to stdout instead, and an
+    explicit path keeps a dated copy. Progress and errors go to stderr either
+    way, so a redirect always yields a clean document.
+    """
+    try:
+        # The spinner must not touch stdout — `console` is bound to it, and a
+        # spinner frame in the middle of a markdown table would corrupt the file.
+        with err.status("[cyan]building report[/cyan]"):
+            with db.connect(read_only=True) as con:
+                data = report_mod.build(con, team=team, sims=sims, seed=seed,
+                                        games_per_week=games, top=top, min_gp=min_gp)
+        text = report_mod.render_markdown(data)
+    except (NoDatabase, RuntimeError) as exc:
+        fail(str(exc))
+
+    if out == "-":
+        # Deliberately not console.print: rich would wrap the tables to terminal
+        # width, parse [...] as markup and syntax-highlight the result.
+        sys.stdout.write(text)
+        return
+
+    path = Path(out) if out else report_mod.DEFAULT_OUT
+    # Create the directory rather than throwing away a simulation that already
+    # ran, and report a write failure the way every other command reports one
+    # instead of unwinding a traceback over the report.
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    except OSError as exc:
+        fail(f"could not write {path}: {exc}")
+    err.print(f"[green]Wrote[/green] {path} "
+              f"[dim]({len(text.splitlines()):,} lines)[/dim]")
 
 
 @app.command("sql")

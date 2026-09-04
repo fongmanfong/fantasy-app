@@ -10,6 +10,9 @@ dist/
 # Left narrow so a committed .claude/settings.json stays possible.
 .claude/worktrees/
 
+# Generated reports
+reports/
+
 # Data
 data/
 *.duckdb

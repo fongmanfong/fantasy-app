@@ -32,6 +32,35 @@ def latest_pull(con):
     return {"id": row[0], "league_key": row[1], "at": row[2].isoformat()}
 
 
+def calendar(con) -> dict:
+    """
+    Where the season is: the current week, the playoff boundary, and whether
+    it has finished.
+
+    `meta` deliberately does not carry these — it backs the `/api/meta` payload
+    and widening it would change that contract. Settings arrive from a LEFT
+    JOIN because `league_settings` is mostly NULL on older snapshots.
+    """
+    row = con.execute("""
+        select l.season, l.current_week, l.is_finished, l.start_date, l.end_date,
+               s.playoff_start_week, s.num_playoff_teams
+        from v_leagues l
+        left join v_league_settings s using (league_key, pull_id)
+        limit 1
+    """).fetchone()
+    if not row:
+        raise RuntimeError("No league in the snapshot. Run `fantasy pull` first.")
+
+    keys = ["season", "current_week", "is_finished", "start_date", "end_date",
+            "playoff_start_week", "num_playoff_teams"]
+    out = dict(zip(keys, row))
+
+    week, playoff = out["current_week"], out["playoff_start_week"]
+    out["in_playoffs"] = bool(week and playoff and week >= playoff)
+    out["weeks_to_playoffs"] = (playoff - week) if (week and playoff and week < playoff) else 0
+    return out
+
+
 def _names(con, pull_id: int) -> dict:
     """
     Stat names for this pull.
