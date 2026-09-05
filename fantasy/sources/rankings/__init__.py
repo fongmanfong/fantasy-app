@@ -25,6 +25,7 @@ from . import dynatyze, hashtagbasketball
 
 @dataclass(frozen=True)
 class Source:
+    """One ranking site: where to fetch it, and the pure parser for its HTML."""
     url: str
     parse: Callable[[str], list[dict]]
 

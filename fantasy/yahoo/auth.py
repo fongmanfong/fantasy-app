@@ -39,6 +39,12 @@ def _write_private(path, payload: dict) -> None:
 
 
 def load_token() -> dict | None:
+    """
+    The stored OAuth token, or None if there is none to read.
+
+    A corrupt or unreadable file reads as "no token" rather than raising: the
+    recovery is `fantasy auth login` either way.
+    """
     if not config.TOKEN_PATH.exists():
         return None
     try:
@@ -48,15 +54,18 @@ def load_token() -> dict | None:
 
 
 def save_token(token: dict) -> None:
+    """Write the token to ~/.fantasy/token.json, mode 600, replacing atomically."""
     _write_private(config.TOKEN_PATH, dict(token))
 
 
 def clear_token() -> None:
+    """Forget this machine's authorisation — the token and the login state."""
     config.TOKEN_PATH.unlink(missing_ok=True)
     config.STATE_PATH.unlink(missing_ok=True)
 
 
 def token_expires_at(token: dict | None = None) -> datetime | None:
+    """When the access token lapses, in UTC, or None if that is not recorded."""
     token = token or load_token()
     if not token or not token.get("expires_at"):
         return None
@@ -64,6 +73,10 @@ def token_expires_at(token: dict | None = None) -> datetime | None:
 
 
 def is_expired(token: dict | None = None, skew: int = 60) -> bool:
+    """
+    Whether the token needs refreshing, `skew` seconds early so a request does
+    not lapse in flight. A missing token or a missing expiry counts as expired.
+    """
     token = token or load_token()
     if not token:
         return True

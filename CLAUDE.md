@@ -12,12 +12,13 @@ cannot do. This file is the part that is not obvious from the code.
 
 **Use the venv.** `.venv/bin/python`, `.venv/bin/fantasy`. There is no global install.
 
-**DuckDB takes an exclusive lock on the file.** Only one writer at a time. Two
-`fantasy` commands cannot run concurrently, and an open `duckdb` shell blocks a
-`pull`. Read-only commands (`sql`, `tables`, `pulls`, `rules`, `matchup`,
-`waivers`, `view`) open the file read-only and *can* share it. Do not fan
-analysis out across parallel shells expecting them to interleave — run them in
-sequence.
+**DuckDB takes an exclusive lock on the file.** Only one writer at a time. The
+writers are `pull`, `rankings pull` and `schedule pull`; two of them cannot run
+concurrently, and an open `duckdb` shell blocks any of them. Everything else —
+`sql`, `tables`, `pulls`, `rules`, `matchup`, `waivers`, `report`, `view`,
+`rankings show`, `schedule show` — opens the file read-only and *can* share it.
+Do not fan analysis out across parallel shells expecting them to interleave —
+run them in sequence.
 
 **The Yahoo API currently 403s every Fantasy endpoint.** `pull`, `leagues` and
 `auth status` will all fail with `403 Forbidden`. This is an account/app
@@ -81,6 +82,40 @@ The rest of the CLI answers narrower questions:
 
 Teams resolve loosely — team key, team id (`8`), or part of a name or manager.
 
+## The two outside sources
+
+Besides the Yahoo league, the store pulls in two things on their own cadence.
+Each has its own pull sequence and its own orchestrator, and neither is stamped
+with a league key, because neither is specific to one league.
+
+```sh
+.venv/bin/fantasy rankings sources           # what this app knows how to scrape
+.venv/bin/fantasy rankings pull hashtag_dynasty
+.venv/bin/fantasy rankings show hashtag_dynasty
+.venv/bin/fantasy schedule pull              # season inferred from today's date
+.venv/bin/fantasy schedule show --team BOS
+```
+
+- **Rankings** (`sources/rankings/`) are a registry: each site is one module
+  with a pure `parse(html)` next to `hashtagbasketball.py`, registered in the
+  `SOURCES` dict. Adding a site changes nothing else in the app.
+- **The schedule** (`sources/schedule/`) is stats.nba.com via `nba_api`, and it
+  is what `projection.team_schedule` fits per-team games-per-week from. Without
+  it the model falls back to a flat 3.5 and says so in `fantasy rules`.
+
+**Names are the join.** An outside source prints "Nikola Jokic" where Yahoo has
+"Nikola Jokić", so both sides go through `names.normalize()` — case, accents,
+punctuation, suffixes, and a short first-name nickname table, deliberately
+never the surname. A ranking row that still doesn't match is **stored with a
+null `player_key` rather than dropped**: an unmatched name is a signal about
+`normalize()`, and throwing it away would hide the miss. `fantasy rankings show`
+prints those as `unmatched`.
+
+The same normalisation exists twice — once in `names.py` and once as the
+`name_key()` SQL macro in `schema.sql`, used by the `player_name_key` column.
+**If you change one, change the other.** Nothing currently tests that they
+agree.
+
 For anything the CLI does not already print, **call the Python API rather than
 parsing terminal output**. Every entry point takes an open connection and
 returns plain dicts:
@@ -125,11 +160,20 @@ probabilities that nothing has validated.
 
 ```
 fantasy/
-├── cli.py            Typer commands; rendering only, no logic
-├── pull.py           snapshot orchestration; a failed step is recorded, the rest continues
+├── cli.py            Typer commands; presentation. No model logic lives here.
+├── config.py         paths and environment; DB_PATH, token location, credentials
+├── names.py          normalize() — the join key between an outside name and v_players
 ├── query.py          read-side queries over the latest snapshot
+├── report.py         `fantasy report`; build() composes data, render_markdown() emits prose
 ├── server.py         stdlib HTTP + JSON for `fantasy view`
-├── yahoo/            auth, client, parse (pure functions, no I/O)
+├── templates/        app.html, the single page `fantasy view` serves
+├── pull.py           league snapshot orchestration; a failed step is recorded, the rest continues
+├── rankings.py       ranking-site pull orchestration
+├── schedule.py       NBA schedule pull orchestration
+├── yahoo/            auth, client, parse (parsers pure, no I/O)
+├── sources/          everything pulled in besides your Yahoo league
+│   ├── rankings/     a registry of interchangeable scrapers behind one SOURCES dict
+│   └── schedule/     stats.nba.com, split client.py/parse.py the same way yahoo/ is
 ├── store/            db.py + schema.sql
 └── analysis/
     ├── rules.py      league rules from the snapshot; runs first, refuses what it can't model
@@ -139,9 +183,19 @@ fantasy/
     └── waiver.py     add/drop search + lineup legality
 ```
 
-- **The store is append-only.** Nothing is ever UPDATEd or DELETEd. `v_*` views
-  resolve to the newest successful pull. Keep it that way — accumulated history
-  is the basis for several planned improvements.
+`cli.py` is presentation, but it is not *only* rendering: a few commands build
+their own display SQL (`schedule show`, `rankings show`, `pulls`), `report`
+owns writing the file, and `auth status` makes a live call. The line that does
+hold, and is worth keeping, is that **no model or simulation logic lives in the
+CLI** — if you find yourself computing something there that a caller other than
+the terminal would want, it belongs in `query.py` or `analysis/`.
+
+- **The store is append-only.** Nothing is ever UPDATEd or DELETEd except a
+  pull row's own status. There are now **three independent pull sequences** —
+  `pulls` (the league), `ranking_pulls`, `nba_schedule_pulls` — and each family
+  of `v_*` views resolves to the newest successful pull *of its own kind*, so a
+  stale schedule and a fresh league snapshot coexist happily. Keep it that way;
+  accumulated history is the basis for several planned improvements.
 - **Parsers are pure.** `yahoo/parse.py` takes Yahoo-shaped dicts and returns
   flat rows, no network. That is why it is testable.
 - **Analysis returns plain dicts.** The CLI, the JSON server and a REPL all use
@@ -149,7 +203,10 @@ fantasy/
 - **Nothing about the league is hardcoded.** Categories, the inverted category
   and roster slots come from the snapshot via `rules.py`. If you add a scored
   quantity, add it to `rules.SIMULATED` (keyed by Yahoo stat id) or the run will
-  correctly refuse.
+  correctly refuse. Which side of a category *wins* is decided in exactly one
+  place — `query.beats(a, b, cat)`, which works on scalars and numpy arrays
+  alike — so never write `if cat["neg"]` at a comparison site. Bench and IL
+  slots go through `rules.is_bench` for the same reason.
 - **Simulate once, reuse the columns.** `simulate.draw` gives a
   `(sims × players)` array per category; a lineup is a set of columns to sum and
   a swap is `− column[drop] + column[add]`. If you find yourself re-simulating
@@ -157,16 +214,23 @@ fantasy/
 
 ## Conventions
 
-- **Dependencies are deliberately few** — duckdb, numpy, typer, rich,
-  requests-oauthlib, python-dotenv. The web layer is stdlib on purpose. Do not
-  add pandas/scipy/flask without asking; the analysis is numpy-only by choice.
+- **Dependencies are deliberately few** — duckdb, numpy, requests,
+  requests-oauthlib, nba_api, typer, rich, python-dotenv. The web layer is
+  stdlib on purpose. Do not add scipy/flask/pandas without asking.
+  **`nba_api` does pull pandas in transitively**, which is why
+  `sources/schedule/client.py` imports it *inside* `fetch_schedule` rather than
+  at module load — pandas costs real startup time on every `fantasy`
+  invocation. Keep it that way, and keep pandas out of `analysis/`: the model
+  is numpy-only by choice.
 - **Tests are plain assertion scripts, not pytest.** They print a summary and
-  exit non-zero on failure. No network, no database — `rules.py` is tested
-  against in-memory DuckDB fixtures.
+  exit non-zero on failure. No network and no database *file* — `rules.py` and
+  the report are tested against in-memory DuckDB fixtures.
   ```sh
-  .venv/bin/python tests/test_parse.py
-  .venv/bin/python tests/test_analysis.py
+  .venv/bin/python tests/run_all.py          # all seven, one line each
+  .venv/bin/python tests/test_analysis.py    # or any one on its own
   ```
+  The seven are `test_parse`, `test_analysis`, `test_report`, `test_names`,
+  `test_rankings`, `test_dynatyze`, `test_schedule`.
 - **Comments explain why, not what.** Docstrings are prose, not parameter lists.
   Match the surrounding density rather than annotating every line.
 - **Calibration constants carry their reasoning** in a comment above them
@@ -178,6 +242,10 @@ fantasy/
 - Commit `data/` or `.env*` — both gitignored, and the DB is regenerable.
 - Assume the nine standard categories. Read them from `rules.load`.
 - Key anything on `stat_name`. Use `stat_id`.
+- Re-implement "which side wins this category" at a comparison site. Call
+  `query.beats`.
+- Edit `AGENTS.md` and `CLAUDE.md` separately — `AGENTS.md` is a symlink to
+  this file, so there is only one to edit.
 - Re-run `fantasy auth login` to "fix" a 403.
 - Report a simulated probability without the assumptions that produced it.
 

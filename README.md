@@ -387,6 +387,7 @@ WHERE team_key = (SELECT team_key FROM v_teams WHERE is_my_team)
 fantasy/
 ├── cli.py            # Typer commands
 ├── config.py         # env + paths
+├── names.py          # normalize() — the join key between an outside name and a Yahoo one
 ├── pull.py           # snapshot orchestration
 ├── query.py          # read-side queries over the latest snapshot
 ├── rankings.py       # scrape a ranking site, match players, append to DuckDB
@@ -424,18 +425,14 @@ docs/
 `tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures,
 `tests/test_analysis.py` the simulation math against hand-built players,
 `tests/test_report.py` the report's formatting and derivations against a fixture
-document, `tests/test_rankings.py` and `tests/test_dynatyze.py` each ranking-site
-scraper against a saved fixture of that site's real markup, and `tests/test_schedule.py`
-the schedule parser against a ScheduleLeagueV2-shaped fixture. None touches the
-network or the database:
+document, `tests/test_names.py` the name standardizer, `tests/test_rankings.py`
+and `tests/test_dynatyze.py` each ranking-site scraper against a saved fixture of
+that site's real markup, and `tests/test_schedule.py` the schedule parser against
+a ScheduleLeagueV2-shaped fixture. None touches the network or a database file:
 
 ```sh
-.venv/bin/python tests/test_parse.py
-.venv/bin/python tests/test_analysis.py
-.venv/bin/python tests/test_report.py
-.venv/bin/python tests/test_rankings.py
-.venv/bin/python tests/test_dynatyze.py
-.venv/bin/python tests/test_schedule.py
+.venv/bin/python tests/run_all.py          # all of them, one line each
+.venv/bin/python tests/test_analysis.py    # or any one on its own
 ```
 
 ## Notes

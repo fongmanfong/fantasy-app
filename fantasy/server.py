@@ -20,6 +20,16 @@ APP_HTML = Path(__file__).parent / "templates" / "app.html"
 
 
 class Handler(BaseHTTPRequestHandler):
+    """
+    Serves the single-page app and a read-only JSON API over `query.py`.
+
+    `GET /` returns the app; `/api/meta`, `/api/roster?team=`,
+    `/api/free-agents`, `/api/standings` and `/api/compare?a=&b=` return the
+    corresponding `query` call, all taking an optional `?period=` (default
+    "season"). Anything that goes wrong comes back as `{"error": ...}` with a
+    400, since every failure here is a bad request or an empty snapshot.
+    """
+
     def __init__(self, *args, con=None, lock=None, **kw):
         self.con, self.lock = con, lock
         super().__init__(*args, **kw)

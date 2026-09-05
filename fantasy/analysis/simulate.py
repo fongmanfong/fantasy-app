@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..query import beats
 from .projection import ATTEMPT_CV, COUNTING, RATE_PAIRS, SPREAD, Player
 
 # Week-to-week shooting form, as the number of shots' worth of confidence we
@@ -31,24 +32,24 @@ SHOOTING_ESS = 400.0
 # Which categories are scored, and which of them invert, is a property of the
 # league rather than of this module — see `fantasy.analysis.rules`. Every
 # comparison below takes that list explicitly rather than assuming the nine
-# standard categories.
-SIMULATED_KEYS = COUNTING + list(RATE_PAIRS)
-
-
-def _scored(categories: list[dict]) -> tuple[list[str], set[str]]:
-    return ([c["key"] for c in categories],
-            {c["key"] for c in categories if c.get("neg")})
+# standard categories, and defers to `query.beats` for which side of one wins.
 
 
 @dataclass
 class Draws:
     """Simulated weekly output for every player, one column each."""
-    keys: list[str]
-    index: dict[str, int]
+    index: dict[str, int]           # player key -> its column in every array
     totals: dict[str, np.ndarray]   # category or makes/attempts -> (sims, players)
     sims: int
 
     def columns(self, player_keys) -> np.ndarray:
+        """
+        Column indices for a set of player keys, in the order given.
+
+        Keys this draw does not know are skipped rather than raising, so a
+        lineup can be described loosely; callers that need every player to be
+        present check the length of what comes back.
+        """
         return np.array([self.index[k] for k in player_keys if k in self.index],
                         dtype=np.intp)
 
@@ -64,7 +65,15 @@ def _gamma(rng, mean: np.ndarray, var: np.ndarray) -> np.ndarray:
 
 
 def draw(players: list[Player], sims: int = 10000, seed: int | None = 0) -> Draws:
-    """Simulate `sims` weeks for every player in `players`."""
+    """
+    Simulate `sims` weeks for every player in `players`.
+
+    `seed` fixes the generator, which is what makes two candidate rosters
+    comparable: pass the same seed and the same player list and every lineup is
+    scored against identical weeks. `seed=None` draws fresh randomness instead,
+    which is how to check that a result is not an artefact of one seed. Raises
+    `ValueError` on an empty player list.
+    """
     rng = np.random.default_rng(seed)
     n = len(players)
     if n == 0:
@@ -103,7 +112,7 @@ def draw(players: list[Player], sims: int = 10000, seed: int | None = 0) -> Draw
                                     form).astype(np.float32)
 
     keys = [p.player_key for p in players]
-    return Draws(keys=keys, index={k: i for i, k in enumerate(keys)},
+    return Draws(index={k: i for i, k in enumerate(keys)},
                  totals=totals, sims=sims)
 
 
@@ -125,7 +134,14 @@ def team_week(draws: Draws, columns: np.ndarray) -> dict[str, np.ndarray]:
 
 def swap(week: dict[str, np.ndarray], draws: Draws,
          drop: int | None, add: int | None) -> dict[str, np.ndarray]:
-    """A lineup's totals with one player replaced, without re-simulating."""
+    """
+    A lineup's totals with one player replaced, without re-simulating.
+
+    `drop` and `add` are **column indices**, not player keys — take them from
+    `draws.index[player_key]`. Either may be `None` to leave that side of the
+    swap alone: `add=None` prices what a lineup loses by dropping someone, and
+    `drop=None` what it gains from a free roster spot.
+    """
     out = {}
     for c in COUNTING + [m for pair in RATE_PAIRS.values() for m in pair]:
         col = week[c]
@@ -141,14 +157,21 @@ def swap(week: dict[str, np.ndarray], draws: Draws,
 
 
 def category_probs(a: dict, b: dict, categories: list[dict]) -> dict[str, dict]:
-    """Win/tie/loss probability per category for lineup `a` against `b`."""
-    keys, negative = _scored(categories)
+    """
+    Win/tie/loss probability per category for lineup `a` against `b`.
+
+    Keyed by category, each value a dict of `p_win`, `p_tie`, `p_loss` and the
+    mean and standard deviation of each side's weekly total (`a_mean`, `a_sd`,
+    `b_mean`, `b_sd`) — the totals in the category's own units, so a rate
+    category reports a percentage and a counting one a weekly count.
+    """
     out = {}
-    for cat in keys:
-        va, vb = a[cat], b[cat]
-        wins = (va < vb) if cat in negative else (va > vb)
+    for cat in categories:
+        key = cat["key"]
+        va, vb = a[key], b[key]
+        wins = beats(va, vb, cat)
         ties = va == vb
-        out[cat] = {
+        out[key] = {
             "p_win": float(wins.mean()),
             "p_tie": float(ties.mean()),
             "p_loss": float(1.0 - wins.mean() - ties.mean()),
@@ -160,16 +183,21 @@ def category_probs(a: dict, b: dict, categories: list[dict]) -> dict[str, dict]:
 
 def cats_won(a: dict, b: dict, categories: list[dict]) -> np.ndarray:
     """Categories won per simulation — the head-to-head score."""
-    keys, negative = _scored(categories)
-    total = np.zeros(len(a[keys[0]]), dtype=np.float32)
-    for cat in keys:
-        va, vb = a[cat], b[cat]
-        total += ((va < vb) if cat in negative else (va > vb))
+    total = np.zeros(len(a[categories[0]["key"]]), dtype=np.float32)
+    for cat in categories:
+        total += beats(a[cat["key"]], b[cat["key"]], cat)
     return total
 
 
 def matchup_summary(a: dict, b: dict, categories: list[dict]) -> dict:
-    """Expected score and win probability for one head-to-head week."""
+    """
+    Expected score and win probability for one head-to-head week.
+
+    Returns `expected_cats_won` (the mean of the score, not a rounded count),
+    `p_win`/`p_tie`/`p_loss` over the whole matchup, `n_categories`, and
+    `score_distribution` — categories won mapped to the share of simulations
+    that landed there, which is where a bimodal week shows up that a mean hides.
+    """
     won = cats_won(a, b, categories)
     lost = cats_won(b, a, categories)
     n = len(categories)

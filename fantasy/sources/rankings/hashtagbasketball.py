@@ -140,6 +140,13 @@ class _DynastyParser(HTMLParser):
 
 
 def parse_dynasty(html: str) -> list[dict]:
+    """
+    Ranking rows scraped from the page's player cards.
+
+    Returns `[]` when the markup no longer matches — a redesign shows up as an
+    empty pull rather than an exception, which is the honest outcome: nothing
+    was scraped, and the previous pull stays the newest successful one.
+    """
     parser = _DynastyParser()
     parser.feed(html)
     return parser.rows

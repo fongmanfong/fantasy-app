@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ScheduleResult:
+    """What one schedule pull wrote, or why it did not."""
     pull_id: int
     season: str
     games: int = 0
@@ -22,10 +23,22 @@ class ScheduleResult:
 
     @property
     def status(self) -> str:
+        """What gets written to the pull row: a failed fetch is still a pull."""
         return "error" if self.error else "success"
 
 
 def run(season: str | None = None, on_step=None) -> ScheduleResult:
+    """
+    Fetch one season's NBA schedule and append it.
+
+    `season` defaults to the current one by date (see `client.current_season`,
+    which rolls over in August, when the NBA publishes). Opens a **writable**
+    connection, so it cannot run alongside another `fantasy` command.
+
+    A fetch or parse failure is recorded on the pull row and returned on the
+    result rather than raised — the previous schedule stays the newest
+    successful one, so `projection.team_schedule` keeps working.
+    """
     step = on_step or (lambda msg: None)
     season = season or client.current_season()
 

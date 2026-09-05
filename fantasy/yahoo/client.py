@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _chunks(items: list, size: int = BATCH_SIZE):
+    """Split a key list into request-sized batches — Yahoo caps them at 25."""
     for i in range(0, len(items), size):
         yield items[i:i + size]
 
@@ -30,6 +31,18 @@ def game_key_of(league_key: str) -> str:
 
 
 class YahooClient:
+    """
+    One authenticated session against the Yahoo Fantasy API.
+
+    Every method returns parsed rows from :mod:`fantasy.yahoo.parse`, never raw
+    Yahoo shapes — the exception is `league_settings`, which hands back the
+    envelope because several parsers read different parts of it. Pass `session`
+    to inject a test double; left out, the stored OAuth token is used.
+
+    Yahoo currently 403s every fantasy endpoint for this app, so nothing here
+    can be exercised live; the parsers it delegates to are what the tests cover.
+    """
+
     def __init__(self, session=None):
         self._session = session or auth.session()
 
@@ -42,10 +55,18 @@ class YahooClient:
     # --- Discovery ---
 
     def my_leagues(self, game_code: str = "nba") -> list[dict]:
+        """Every league on the authenticated account, with its league_key."""
         data = self._get(f"/users;use_login=1/games;game_codes={game_code}/leagues")
         return parse.parse_my_leagues(data)
 
     def my_team_key(self, league_key: str) -> str | None:
+        """
+        Which team in this league is yours, or None if Yahoo will not say.
+
+        Returns None rather than raising: not knowing which team is yours makes
+        the analysis commands ask for one explicitly, which is a far better
+        outcome than losing the whole snapshot over it.
+        """
         try:
             data = self._get(
                 f"/users;use_login=1/games;game_keys={game_key_of(league_key)}"
@@ -64,11 +85,19 @@ class YahooClient:
         return data.get("fantasy_content", {})
 
     def standings(self, league_key: str) -> list[dict]:
+        """One row per team: name, manager, record and standing."""
         return parse.parse_standings(self._get(f"/league/{league_key}/standings"))
 
     # --- Rosters ---
 
     def team_roster(self, team_key: str) -> list[dict]:
+        """
+        One team's current roster, each player carrying their selected slot.
+
+        Yahoo nests this differently depending on the response, hence the
+        defensive unwrapping; an unrecognised shape yields an empty list rather
+        than raising, so one odd team does not sink a pull.
+        """
         data = self._get(f"/team/{team_key}/roster/players")
         team = parse._as_list(data.get("fantasy_content", {}).get("team"))
         if len(team) < 2 or not isinstance(team[1], dict):
@@ -121,6 +150,15 @@ class YahooClient:
     # --- Players ---
 
     def player_stats(self, league_key: str, player_keys: list[str], period: str) -> list[dict]:
+        """
+        Stat totals for a set of players over one window.
+
+        `period` is a key of `STAT_PERIODS` ("season", "last_7", "last_14",
+        "last_30"), translated to Yahoo's own `type` names. Requests go out in
+        batches of 25; **a failed batch is logged and skipped**, so a short
+        result means some players have no stats for this period rather than that
+        they had none.
+        """
         yahoo_period = STAT_PERIODS.get(period, period)
         rows = []
         for batch in _chunks(player_keys):

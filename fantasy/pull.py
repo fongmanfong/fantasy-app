@@ -13,13 +13,15 @@ DEFAULT_PERIODS = ["season", "last_7", "last_14", "last_30"]
 
 @dataclass
 class PullResult:
+    """What one snapshot wrote, and what it could not."""
     pull_id: int
     league_key: str
-    counts: dict[str, int] = field(default_factory=dict)
-    errors: list[str] = field(default_factory=list)
+    counts: dict[str, int] = field(default_factory=dict)   # table -> rows written
+    errors: list[str] = field(default_factory=list)        # "step: message" per failure
 
     @property
     def status(self) -> str:
+        """'partial' when any step failed — the pull still stands, with holes."""
         return "partial" if self.errors else "success"
 
 
@@ -63,6 +65,22 @@ def run(
     fa_limit: int | None = None,
     on_step=None,
 ) -> PullResult:
+    """
+    Snapshot a league into DuckDB and return what was written.
+
+    Opens a **writable** connection for the whole run, so nothing else can touch
+    the database while it is going — that is the DuckDB exclusive lock, not a
+    choice. `league_key` may be omitted when the account has one NBA league.
+    `skip_stats` drops the slowest step by far, and `fa_limit` caps the
+    free-agent pool (leave it off to search the real one later). `on_step` is
+    called with a progress string.
+
+    A failing step is recorded on the result and the rest of the pull continues,
+    so a Yahoo endpoint going down costs you that table rather than the snapshot.
+    The pull row is closed with status 'partial' when that happens, and the
+    `v_*` views still resolve to it — check `errors` before trusting a table
+    that a partial pull was supposed to fill.
+    """
     periods = periods or DEFAULT_PERIODS
     step = on_step or (lambda msg: None)
 

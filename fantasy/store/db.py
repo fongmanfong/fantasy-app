@@ -25,6 +25,15 @@ class NoDatabase(RuntimeError):
 
 @contextmanager
 def connect(read_only: bool = False):
+    """
+    Open the snapshot database for the duration of a command.
+
+    `read_only=True` is what lets several commands — and a `duckdb` shell —
+    share the file; a writable connection takes an exclusive lock, so only one
+    `pull`, `rankings pull` or `schedule pull` can run at a time. Raises
+    :class:`NoDatabase` rather than an opaque IO error when a read-only caller
+    runs before the first pull.
+    """
     # DuckDB refuses to open a nonexistent file read-only, which would otherwise
     # surface as an opaque IO error on a fresh checkout.
     if read_only and not config.DB_PATH.exists():
@@ -46,6 +55,11 @@ def init_schema(con) -> None:
 
 
 def new_pull(con, league_key: str) -> int:
+    """
+    Open a league pull and return its id, for stamping onto every row it
+    writes. Left at status 'running' until `complete_pull` closes it, which is
+    what keeps a half-finished pull out of the `v_*` views.
+    """
     pull_id = con.execute("SELECT nextval('pull_id_seq')").fetchone()[0]
     con.execute(
         "INSERT INTO pulls (pull_id, league_key, pulled_at, status) VALUES (?, ?, ?, 'running')",
@@ -54,14 +68,22 @@ def new_pull(con, league_key: str) -> int:
     return pull_id
 
 
-def complete_pull(con, pull_id: int, status: str, note: str | None = None) -> None:
+def _complete(con, table: str, pk_col: str, pk: int,
+              status: str, note: str | None) -> None:
+    """Close out a pull row. The three sequences differ only in table and key."""
     con.execute(
-        "UPDATE pulls SET status = ?, note = ? WHERE pull_id = ?",
-        [status, note, pull_id],
+        f"UPDATE {table} SET status = ?, note = ? WHERE {pk_col} = ?",
+        [status, note, pk],
     )
 
 
+def complete_pull(con, pull_id: int, status: str, note: str | None = None) -> None:
+    """Mark a league pull finished. Needs a writable connection."""
+    _complete(con, "pulls", "pull_id", pull_id, status, note)
+
+
 def new_ranking_pull(con, source: str, source_url: str) -> int:
+    """Open a ranking-site pull and return its id. See `new_pull`."""
     ranking_pull_id = con.execute("SELECT nextval('ranking_pull_id_seq')").fetchone()[0]
     con.execute(
         "INSERT INTO ranking_pulls (ranking_pull_id, source, source_url, pulled_at, status) "
@@ -72,28 +94,23 @@ def new_ranking_pull(con, source: str, source_url: str) -> int:
 
 
 def complete_ranking_pull(con, ranking_pull_id: int, status: str, note: str | None = None) -> None:
-    con.execute(
-        "UPDATE ranking_pulls SET status = ?, note = ? WHERE ranking_pull_id = ?",
-        [status, note, ranking_pull_id],
-    )
+    """Mark a ranking-site pull finished. Needs a writable connection."""
+    _complete(con, "ranking_pulls", "ranking_pull_id", ranking_pull_id, status, note)
 
 
 def insert_ranking_rows(con, rows: list[dict]) -> int:
-    """Like insert_rows, but player_rankings rows already carry their own
-    ranking_pull_id/source rather than a shared pull_id/league_key stamp."""
-    if not rows:
-        return 0
-    cols = columns_of(con, "player_rankings")
-    placeholders = ", ".join("?" for _ in cols)
-    payload = [[row.get(c) for c in cols] for row in rows]
-    con.executemany(
-        f"INSERT INTO player_rankings ({', '.join(cols)}) VALUES ({placeholders})",
-        payload,
-    )
-    return len(payload)
+    """
+    Append scraped ranking rows. Needs a writable connection.
+
+    Unlike the other two inserters this stamps nothing: `player_rankings` rows
+    already carry their own ranking_pull_id and source, because a ranking pull
+    is not tied to a Yahoo league.
+    """
+    return _insert(con, "player_rankings", rows)
 
 
 def new_schedule_pull(con, season: str) -> int:
+    """Open an NBA schedule pull and return its id. See `new_pull`."""
     pull_id = con.execute("SELECT nextval('nba_schedule_pull_id_seq')").fetchone()[0]
     con.execute(
         "INSERT INTO nba_schedule_pulls (pull_id, season, pulled_at, status) "
@@ -104,49 +121,37 @@ def new_schedule_pull(con, season: str) -> int:
 
 
 def complete_schedule_pull(con, pull_id: int, status: str, note: str | None = None) -> None:
-    con.execute(
-        "UPDATE nba_schedule_pulls SET status = ?, note = ? WHERE pull_id = ?",
-        [status, note, pull_id],
-    )
+    """Mark an NBA schedule pull finished. Needs a writable connection."""
+    _complete(con, "nba_schedule_pulls", "pull_id", pull_id, status, note)
 
 
 def insert_schedule_rows(con, rows: list[dict], pull_id: int, season: str) -> int:
-    """Like insert_rows, but stamps pull_id/season rather than pull_id/league_key."""
-    if not rows:
-        return 0
-    cols = columns_of(con, "nba_schedule")
-    placeholders = ", ".join("?" for _ in cols)
-    payload = []
-    for row in rows:
-        stamped = {**row, "pull_id": pull_id, "season": season}
-        payload.append([stamped.get(c) for c in cols])
-    con.executemany(
-        f"INSERT INTO nba_schedule ({', '.join(cols)}) VALUES ({placeholders})",
-        payload,
-    )
-    return len(payload)
+    """
+    Append NBA schedule rows, stamping pull_id and season rather than a
+    league_key — the schedule is the same for every league. Writable connection.
+    """
+    return _insert(con, "nba_schedule", rows, {"pull_id": pull_id, "season": season})
 
 
 def columns_of(con, table: str) -> list[str]:
+    """The table's column names, in declaration order. Reads only the catalogue."""
     return [r[1] for r in con.execute(f"PRAGMA table_info('{table}')").fetchall()]
 
 
-def insert_rows(con, table: str, rows: list[dict], pull_id: int, league_key: str) -> int:
+def _insert(con, table: str, rows: list[dict], stamp: dict | None = None) -> int:
     """
-    Append rows, stamping pull_id and league_key.
-
-    Row dicts may carry extra keys (the parsers return a superset); anything not in the
-    table is dropped, and missing columns become NULL.
+    The shared append: project each row onto the table's real columns and
+    executemany. Row dicts may carry extra keys — the parsers return a superset
+    — so anything not in the table is dropped and missing columns become NULL.
+    `stamp` is merged into every row, which is how a pull id gets onto the data
+    without every parser having to know about it.
     """
     if not rows:
         return 0
 
     cols = columns_of(con, table)
     placeholders = ", ".join("?" for _ in cols)
-    payload = []
-    for row in rows:
-        stamped = {**row, "pull_id": pull_id, "league_key": league_key}
-        payload.append([stamped.get(c) for c in cols])
+    payload = [[{**row, **(stamp or {})}.get(c) for c in cols] for row in rows]
 
     con.executemany(
         f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})",
@@ -155,7 +160,16 @@ def insert_rows(con, table: str, rows: list[dict], pull_id: int, league_key: str
     return len(payload)
 
 
+def insert_rows(con, table: str, rows: list[dict], pull_id: int, league_key: str) -> int:
+    """
+    Append league-snapshot rows, stamping pull_id and league_key. Needs a
+    writable connection.
+    """
+    return _insert(con, table, rows, {"pull_id": pull_id, "league_key": league_key})
+
+
 def table_names(con) -> list[str]:
+    """Every table and view in the database, tables first. Backs `fantasy tables`."""
     rows = con.execute(
         "SELECT table_name FROM information_schema.tables "
         "WHERE table_schema = 'main' ORDER BY table_type, table_name"
@@ -164,4 +178,5 @@ def table_names(con) -> list[str]:
 
 
 def row_count(con, name: str) -> int:
+    """Row count for one table or view."""
     return con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]

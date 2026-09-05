@@ -31,6 +31,18 @@ LOWER_WINS = {"19"}
 # different objective entirely, not a tweaked one.
 SUPPORTED_SCORING = {"head"}
 
+# Roster slots that do not accrue stats. Yahoo names several flavours of
+# injured list ("IL", "IL+", "IL-", and league-specific variants), so the IL
+# side is matched by prefix rather than enumerated. One definition, because
+# `_slot_summary` here and `waiver._lineup_slots` both partition
+# `v_roster_positions` on it and must agree about what counts as active.
+BENCH_SLOTS = {"BN"}
+
+
+def is_bench(position: str) -> bool:
+    """Whether a roster slot sits out the week — the bench or any IL variant."""
+    return position in BENCH_SLOTS or position.startswith("IL")
+
 LABELS = {c["key"]: c for c in DISPLAY}
 
 
@@ -44,11 +56,22 @@ class Fact:
     short: str = ""      # compact form for the one-line header
 
     def brief(self) -> str:
+        """The compact form, for a one-line command header."""
         return self.short or f"{self.label} {self.value}"
 
 
 @dataclass
 class Rules:
+    """
+    The rules one analysis run is operating under.
+
+    `categories` are the scored categories in display order, each a dict of
+    `key`, `label`, `stat_id` and `neg` (true where a low number wins) — read
+    them from here rather than assuming the nine standard ones.
+    `games_per_week` is games per NBA team per week, a league-wide average;
+    the simulator uses per-team schedules and only falls back to this number.
+    `facts` is every rule the run depends on, sourced or assumed.
+    """
     league_key: str
     name: str
     season: int | None
@@ -59,6 +82,7 @@ class Rules:
 
     @property
     def assumed(self) -> list[Fact]:
+        """The facts nothing in the snapshot could confirm. Report these."""
         return [f for f in self.facts if f.source == "assumed"]
 
     def summary(self) -> str:
@@ -113,8 +137,9 @@ def _scored_categories(con) -> tuple[list[dict], list[Fact]]:
             short="TO inverted"))
 
     # Keep the interface's display order, restricted to what this league scores.
+    display_keys = {c["key"] for c in DISPLAY}
     ordered = [by_key[c["key"]] for c in DISPLAY if c["key"] in by_key]
-    ordered += [v for k, v in by_key.items() if k not in {c["key"] for c in DISPLAY}]
+    ordered += [v for k, v in by_key.items() if k not in display_keys]
     return ordered, facts
 
 
@@ -126,11 +151,11 @@ def load(con, games_per_week: float | None = None) -> Rules:
     simulator has no quantity for.
     """
     row = con.execute(
-        "select league_key, name, season, scoring_type, num_teams from v_leagues limit 1"
+        "select league_key, name, season, scoring_type from v_leagues limit 1"
     ).fetchone()
     if not row:
         raise RuntimeError("No league in the snapshot. Run `fantasy pull` first.")
-    league_key, name, season, scoring_type, num_teams = row
+    league_key, name, season, scoring_type = row
 
     if scoring_type not in SUPPORTED_SCORING:
         raise RuntimeError(
@@ -190,9 +215,10 @@ def load(con, games_per_week: float | None = None) -> Rules:
 
 
 def _slot_summary(con) -> str:
+    """The roster shape as one line, e.g. "11 active, 3 bench, 2 IL"."""
     rows = con.execute(
         "select position, count from v_roster_positions").fetchall()
-    active = sum(c or 0 for p, c in rows if p not in ("BN", "IL", "IL+", "IL-"))
-    bench = sum(c or 0 for p, c in rows if p in ("BN",))
+    active = sum(c or 0 for p, c in rows if not is_bench(p))
+    bench = sum(c or 0 for p, c in rows if p == "BN")
     il = sum(c or 0 for p, c in rows if p.startswith("IL"))
     return f"{active} active, {bench} bench, {il} IL"

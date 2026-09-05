@@ -18,6 +18,7 @@ HEADERS = {
 
 
 def get(url: str) -> str:
+    """Fetch a page as text, raising on any non-2xx status."""
     resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
     resp.raise_for_status()
     return resp.text

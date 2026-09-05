@@ -30,6 +30,14 @@ _JSONLD_RE = re.compile(
 
 
 def parse_dynasty(html: str) -> list[dict]:
+    """
+    Ranking rows from the embedded JSON-LD block. See the module docstring for
+    why this reads the SEO markup rather than the site's own rankings API.
+
+    Returns `[]` when the block is absent — the page rendered differently, or
+    dynatyze changed its markup — rather than raising, so a scrape that finds
+    nothing is recorded as an empty pull instead of an error.
+    """
     match = _JSONLD_RE.search(html)
     if not match:
         return []  # markup changed or the page didn't render the block we expect

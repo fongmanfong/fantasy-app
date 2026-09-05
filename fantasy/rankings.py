@@ -17,15 +17,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RankingPullResult:
+    """What one ranking-site pull scraped, and how much of it found a player."""
     ranking_pull_id: int
     source: str
     source_url: str
     rows: int = 0
-    matched: int = 0
+    matched: int = 0        # rows joined to a player_key in the league snapshot
     error: str | None = None
 
     @property
     def status(self) -> str:
+        """What gets written to the pull row: a failed scrape is still a pull."""
         return "error" if self.error else "success"
 
 
@@ -43,6 +45,18 @@ def _match_players(con) -> dict[str, str]:
 
 
 def run(source: str, url: str | None = None) -> RankingPullResult:
+    """
+    Scrape one ranking site and append it, matching rows to the league snapshot.
+
+    `source` is a key of `sources.rankings.SOURCES`; `url` overrides that
+    source's default page. Opens a **writable** connection, so it cannot run
+    alongside another `fantasy` command.
+
+    Rows that do not match a player are stored anyway, with a null `player_key`
+    — an unmatched name is a signal about `names.normalize`, and throwing it
+    away would hide the miss. Raises only on an unknown source; a fetch or parse
+    failure is recorded on the pull row and returned on the result.
+    """
     if source not in SOURCES:
         known = ", ".join(sorted(SOURCES))
         raise RuntimeError(f"Unknown ranking source {source!r}. Known: {known}")

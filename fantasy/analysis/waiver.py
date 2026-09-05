@@ -12,11 +12,11 @@ by what the team loses without them, and only the cheapest are offered up.
 """
 import numpy as np
 
-from . import matchup, projection, simulate
+from ..query import beats
+from . import matchup, projection, rules as rules_mod, simulate
 
 # Slots a player can fill beyond their listed positions.
 FLEX = {"G": {"PG", "SG"}, "F": {"SF", "PF"}}
-BENCH = {"BN", "IL", "IL+", "IL-"}
 
 
 def _lineup_slots(con) -> list[set | None]:
@@ -25,7 +25,7 @@ def _lineup_slots(con) -> list[set | None]:
         "select position, count from v_roster_positions").fetchall()
     slots: list[set | None] = []
     for position, count in rows:
-        if position in BENCH:
+        if rules_mod.is_bench(position):
             continue
         for _ in range(count or 0):
             if position in ("Util", "UTIL"):
@@ -65,9 +65,17 @@ def fills_lineup(players: list, slots: list[set | None]) -> bool:
 
 
 class Scorer:
-    """Scores a candidate week against a fixed set of opponents."""
+    """
+    Scores a candidate week against a fixed set of opponents.
+
+    Deliberately two-dimensional where :func:`fantasy.analysis.simulate.cats_won`
+    is one: the opponents' weeks are stacked into a (opponents x sims) array so
+    a candidate roster is measured against the whole league in one pass. That is
+    what makes a several-hundred-way add/drop search affordable.
+    """
 
     def __init__(self, opponent_weeks: list[dict], categories: list[dict]):
+        """`opponent_weeks` are `simulate.team_week` results, one per opponent."""
         self.n = len(opponent_weeks)
         self.categories = categories
         self.opp = {c["key"]: np.stack([w[c["key"]] for w in opponent_weeks])
@@ -81,15 +89,15 @@ class Scorer:
         for cat in self.categories:
             k = cat["key"]
             va, vb = week[k], self.opp[k]
-            gt, lt = va > vb, va < vb
-            win, lose = (lt, gt) if cat.get("neg") else (gt, lt)
+            win, lose = beats(va, vb, cat), beats(vb, va, cat)
             won += win
             lost += lose
             per_cat[k] = float(win.mean())
         return float(won.mean()), float((won > lost).mean()), per_cat
 
 
-def _describe(p) -> dict:
+def _describe(p: projection.Player) -> dict:
+    """The player fields a caller needs to name a move, without the projection."""
     return {"player_key": p.player_key, "name": p.name, "nba": p.nba,
             "positions": p.positions, "status": p.status, "gp": round(p.gp, 1),
             "slot": p.selected_position}
@@ -102,11 +110,30 @@ def add_drop(con, team: str | None = None, opponent: str | None = None,
     """
     Rank every legal free-agent pickup by how much it improves the week.
 
-    `opponent` narrows the objective to one team; left out, a swap is judged on
-    how it plays against the league as a whole. `max_drops` caps how many of
-    your own players are considered droppable — the least valuable ones.
+    `team` is whose roster to improve (yours by default) and `opponent` narrows
+    the objective to one team; left out, a swap is judged on how it plays
+    against the league as a whole. `max_drops` caps how many of your own
+    players are considered droppable — the least valuable ones, priced by what
+    the team gives up without them. `top` caps the returned move lists,
+    `min_gp` excludes free agents with too little sample to project, and
+    `periods`, `sims`, `seed` and `games_per_week` are handed to
+    `matchup.prepare` unchanged.
+
+    Returns `team` and `rules`; `opponents` the move was scored against;
+    `baseline` (the roster as it stands, as `expected_cats_won`, `p_win` and
+    per-category win rates); `moves`, the best add/drop pairs, each carrying
+    `add`, `drop`, `expected_cats_won`, `delta_cats`, `p_win`, `delta_p_win`,
+    per-category deltas and the `drop_cost`; `best_by_player`, the same list cut
+    to one row per free agent; `drop_candidates` with their `cost`;
+    `considered` (how many free agents and pairs were searched); and `sims`,
+    `games_per_week` and `categories`.
+
+    **`delta_cats` is the number to compare between candidates**, not to quote
+    on its own — every candidate is scored against the same draws, so the
+    ordering is far more stable than any single figure.
     """
-    me = matchup.resolve_team(con, team)
+    known = matchup.teams(con)
+    me = matchup.resolve_team(con, team, known)
     my_key = me["team_key"]
 
     players, draws, rules = matchup.prepare(con, periods, sims, seed, games_per_week)
@@ -118,9 +145,9 @@ def add_drop(con, team: str | None = None, opponent: str | None = None,
     my_cols = draws.columns([p.player_key for p in mine])
     baseline_week = simulate.team_week(draws, my_cols)
 
-    opponents = ([matchup.resolve_team(con, opponent)]
+    opponents = ([matchup.resolve_team(con, opponent, known)]
                  if opponent else
-                 [matchup.resolve_team(con, k) for k in rostered if k != my_key])
+                 [matchup.resolve_team(con, k, known) for k in rostered if k != my_key])
     if not opponents:
         raise RuntimeError("No opponents to measure against.")
     score = Scorer([
@@ -143,12 +170,16 @@ def add_drop(con, team: str | None = None, opponent: str | None = None,
     candidates = [p for p in players
                   if p.is_free_agent and p.gp >= min_gp and p.p_play > 0]
 
+    # The roster minus each drop candidate is fixed across the whole search, so
+    # build it once per drop rather than once per (candidate, drop) pair.
+    without = {drop.player_key: [p for p in mine if p.player_key != drop.player_key]
+               for _, drop in drops}
+
     results = []
     for add in candidates:
         add_col = draws.index[add.player_key]
         for value, drop in drops:
-            remaining = [p for p in mine if p.player_key != drop.player_key] + [add]
-            if not fills_lineup(remaining, slots):
+            if not fills_lineup(without[drop.player_key] + [add], slots):
                 continue
             week = simulate.swap(baseline_week, draws,
                                  drop=draws.index[drop.player_key], add=add_col)
