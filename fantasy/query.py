@@ -20,9 +20,31 @@ CATEGORIES = [
     {"key": "fg", "label": "FG%", "rate": True},
     {"key": "ft", "label": "FT%", "rate": True},
 ]
+# The categories where a low number wins. Derived from CATEGORIES rather than
+# named literally, so a league whose inverted category is not turnovers picks it
+# up from `rules.load` without a second list to keep in sync.
+NEGATIVE = {c["key"] for c in CATEGORIES if c.get("neg")}
 
 
-def latest_pull(con):
+def beats(a, b, cat: dict):
+    """
+    Whether `a` wins this category against `b`.
+
+    The one place the inverted category flips a comparison. Works on scalars
+    and on numpy arrays alike, which is why the simulator's element-wise
+    win masks and this module's team-vs-team edges can share it.
+    """
+    return (a < b) if cat.get("neg") else (a > b)
+
+
+def latest_pull(con) -> dict:
+    """
+    The newest successful pull: `id`, `league_key`, and `at` as an ISO string.
+
+    Every `v_*` view already resolves to this pull, so this is for stamping and
+    reporting rather than for filtering — a query that joins a view does not
+    need to mention the pull id.
+    """
     row = con.execute(
         "select p.pull_id, p.league_key, p.pulled_at from latest_pull lp "
         "join pulls p using (pull_id, league_key) limit 1"
@@ -81,7 +103,14 @@ def _names(con, pull_id: int) -> dict:
 
 
 def _players(con, period: str) -> list[dict]:
-    """Every rostered player and free agent for one period, as per-game rates."""
+    """
+    Every rostered player and free agent for one period, as per-game rates.
+
+    The counting stats are divided by games played here; FG% and FT% arrive
+    from Yahoo already as percentages and are passed through untouched, as are
+    the makes and attempts behind them. Players with no games in the period are
+    dropped, and an unknown period raises with the list of ones the snapshot has.
+    """
     pull = latest_pull(con)
     n = _names(con, pull["id"])
 
@@ -127,7 +156,14 @@ def _percentiles(pool: list[dict]) -> dict:
             for k in COUNTING + RATES}
 
 
-def _pct(sorted_vals: list, value, neg: bool) -> float:
+def _percentile_of(sorted_vals: list, value, neg: bool) -> float:
+    """
+    Where `value` falls in a sorted pool, 0-1, with 1 always the good end.
+
+    A missing value or an empty pool scores 0.5 rather than 0: an unknown is
+    not evidence of weakness, and zero would drag a player down a category they
+    simply have no reading in.
+    """
     if not sorted_vals or value is None:
         return 0.5
     below = sum(1 for v in sorted_vals if v < value) / len(sorted_vals)
@@ -135,6 +171,10 @@ def _pct(sorted_vals: list, value, neg: bool) -> float:
 
 
 def _shape(rec: dict, dist: dict) -> dict:
+    """
+    One player as the interface wants them: rounded values plus, for every
+    category, a `<key>_p` percentile against `dist` where 1 is always good.
+    """
     p = {"player_key": rec["player_key"], "name": rec["full_name"],
          "nba": rec["editorial_team_abbr"], "status": rec["status"],
          "pos": rec["selected_position"], "gp": int(rec["gp"]),
@@ -142,11 +182,21 @@ def _shape(rec: dict, dist: dict) -> dict:
     for k in COUNTING + RATES:
         v = rec[k]
         p[k] = round(v, 3) if v is not None else None
-        p[k + "_p"] = _pct(dist[k], v, neg=(k == "tov"))
+        p[k + "_p"] = _percentile_of(dist[k], v, neg=(k in NEGATIVE))
     return p
 
 
 def meta(con) -> dict:
+    """
+    Everything an interface needs before it asks for players: the league, its
+    teams in standings order, the stat periods the snapshot holds, the display
+    categories, the league's own scoring categories, the pull it all came from,
+    and `legacy_names` — true when this snapshot predates the stat-map fix and
+    has makes and attempts transposed.
+
+    This backs `/api/meta` and is treated as a fixed contract; season and
+    playoff dates live in `calendar` instead.
+    """
     pull = latest_pull(con)
     league = con.execute(
         "select name, season, num_teams, scoring_type from v_leagues limit 1").fetchone()
@@ -170,22 +220,32 @@ def meta(con) -> dict:
     }
 
 
-def roster(con, team_key: str, period: str = "season") -> dict:
+def _ranked(con, period: str, keep) -> dict:
+    """
+    Shape and sort a subset of the pool, ranked against **rostered** players.
+
+    Percentiles always come from the rostered population, never from whoever
+    `keep` selects: a free agent's 60th percentile has to mean the same thing
+    as a starter's, which it would not if the free-agent pool were ranked
+    against itself.
+    """
     recs = _players(con, period)
     rostered = [r for r in recs if not r["is_free_agent"]]
     dist = _percentiles(rostered)
-    players = [_shape(r, dist) for r in rostered if r["team_key"] == team_key]
+    players = [_shape(r, dist) for r in recs if keep(r)]
     players.sort(key=lambda p: -(p["pts"] or 0))
     return {"players": players, "pool": len(rostered), "period": period}
+
+
+def roster(con, team_key: str, period: str = "season") -> dict:
+    """One team's players, best first, with percentiles against the league."""
+    return _ranked(con, period,
+                   lambda r: not r["is_free_agent"] and r["team_key"] == team_key)
 
 
 def free_agents(con, period: str = "season") -> dict:
-    recs = _players(con, period)
-    rostered = [r for r in recs if not r["is_free_agent"]]
-    dist = _percentiles(rostered)   # rank FAs against rostered players, not each other
-    players = [_shape(r, dist) for r in recs if r["is_free_agent"]]
-    players.sort(key=lambda p: -(p["pts"] or 0))
-    return {"players": players, "pool": len(rostered), "period": period}
+    """The unrostered pool, best first, ranked against rostered players."""
+    return _ranked(con, period, lambda r: r["is_free_agent"])
 
 
 def _team_totals(recs: list[dict], team_key: str) -> dict:
@@ -208,6 +268,14 @@ def _team_totals(recs: list[dict], team_key: str) -> dict:
 
 
 def standings(con, period: str = "season") -> dict:
+    """
+    Every team's category totals, their rank in each (1 is best, and low
+    turnovers rank first), and their `mean_rank` across categories.
+
+    These are summed per-game averages over each team's non-IL players — a
+    measure of roster shape, not a projection of a week. `matchup.versus_field`
+    is what answers "would they win".
+    """
     recs = _players(con, period)
     teams = meta(con)["teams"]
     totals = {t["team_key"]: _team_totals(recs, t["team_key"]) for t in teams}
@@ -233,6 +301,14 @@ def standings(con, period: str = "season") -> dict:
 
 
 def compare(con, a: str, b: str, period: str = "season") -> dict:
+    """
+    Two teams side by side, category by category. `a` and `b` are team keys.
+
+    Each category carries both totals and an `edge` of "a", "b", "tie", or None
+    where either side has no reading, and `score` counts the categories each
+    would take. Like `standings` this compares roster shape, with no simulation
+    and so no notion of how likely the edge is to hold in a given week.
+    """
     recs = _players(con, period)
     ta, tb = _team_totals(recs, a), _team_totals(recs, b)
     names = {t["team_key"]: t["name"] for t in meta(con)["teams"]}
@@ -246,8 +322,7 @@ def compare(con, a: str, b: str, period: str = "season") -> dict:
         elif va == vb:
             edge = "tie"
         else:
-            a_better = (va < vb) if cat.get("neg") else (va > vb)
-            edge = "a" if a_better else "b"
+            edge = "a" if beats(va, vb, cat) else "b"
         cats.append({**cat, "a": va, "b": vb, "edge": edge})
 
     return {

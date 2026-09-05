@@ -75,6 +75,7 @@ class Player:
 
     @property
     def on_il(self) -> bool:
+        """Parked on the injured list, so accruing nothing this week."""
         return self.selected_position == "IL"
 
     def usage_cv(self) -> float:

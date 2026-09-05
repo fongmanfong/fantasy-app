@@ -82,6 +82,27 @@ def _signed(value, places: int = 2, suffix: str = "") -> str:
     return f"{value:+.{places}f}{suffix}"
 
 
+# How much a per-category win-probability change has to move before it is
+# worth naming. Below this the simulation cannot tell it from noise, so listing
+# it would dress up sampling error as a finding.
+MOVER_THRESHOLD = 0.01
+
+
+def movers(categories: dict, up: int = 3, down: int = 2,
+           threshold: float = MOVER_THRESHOLD) -> tuple[list, list]:
+    """
+    The categories a swap most helps and most hurts, as (key, delta) pairs.
+
+    Shared with `fantasy waivers` so the terminal and the report never disagree
+    about which categories a move is worth mentioning. Either list can come back
+    empty when nothing clears the threshold.
+    """
+    ranked = sorted(categories.items(), key=lambda kv: -kv[1])
+    gains = [kv for kv in ranked[:up] if kv[1] > threshold]
+    costs = [kv for kv in ranked[-down:] if kv[1] < -threshold]
+    return gains, costs
+
+
 def _table(headers: list[str], rows: list[list], align: str | None = None) -> list[str]:
     """
     A markdown table. Rows must match the header width — a ragged row is a bug
@@ -653,11 +674,11 @@ def _s5_waivers(d: dict) -> list[str]:
 
     rows = []
     for m in moves:
-        gains = sorted(m["categories"].items(), key=lambda kv: -kv[1])
+        gains, costs = movers(m["categories"])
         up = ", ".join(f"{cat_label.get(k, k)} {100 * v:+.0f}"
-                       for k, v in gains[:3] if v > 0.01) or "—"
+                       for k, v in gains) or "—"
         down = ", ".join(f"{cat_label.get(k, k)} {100 * v:+.0f}"
-                         for k, v in gains[-2:] if v < -0.01) or "—"
+                         for k, v in costs) or "—"
         rows.append([m["add"]["name"], "/".join(m["add"]["positions"][:3]),
                      m["add"]["nba"] or "—", m["add"]["status"] or "—",
                      m["add"]["gp"], m["drop"]["name"],

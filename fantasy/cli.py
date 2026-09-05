@@ -2,16 +2,16 @@
 import logging
 import sys
 import webbrowser
+from contextlib import contextmanager
 from pathlib import Path
-from datetime import datetime, timezone
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from . import config, pull as pull_mod, rankings as rankings_mod, report as report_mod, schedule as schedule_mod, server as server_mod
-from .analysis import (matchup as matchup_mod, projection,
-                       rules as rules_mod, waiver as waiver_mod)
+from .analysis import (matchup as matchup_mod, rules as rules_mod,
+                       waiver as waiver_mod)
 from .sources.rankings import SOURCES
 from .sources.schedule import client as nba_client
 from .store import db
@@ -36,6 +36,53 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 def fail(message: str) -> None:
     err.print(f"[red]error:[/red] {message}")
     raise typer.Exit(1)
+
+
+@contextmanager
+def read_only():
+    """
+    Open the snapshot read-only and turn the two expected failures — no
+    database yet, and anything the analysis refuses to model — into a one-line
+    `error:` rather than a traceback.
+
+    `typer.Exit` subclasses `RuntimeError`, so a `fail()` inside the block has
+    to be let through explicitly or it would be caught and reported as an error
+    about itself.
+    """
+    try:
+        with db.connect(read_only=True) as con:
+            yield con
+    except typer.Exit:
+        raise
+    except (NoDatabase, RuntimeError) as exc:
+        fail(str(exc))
+
+
+def _periods(text: str | None) -> list[str] | None:
+    """A --periods list, or None for "whatever windows the snapshot has"."""
+    if not text:
+        return None
+    return [p.strip() for p in text.split(",") if p.strip()] or None
+
+
+def _truncated(shown: list, total: list) -> None:
+    """Say what was cut, when a --limit hid rows."""
+    if len(shown) < len(total):
+        console.print(f"[dim]{len(shown)} of {len(total)} rows — raise with --limit 0[/dim]")
+
+
+# Options shared by `matchup`, `waivers` and `report`. Declared once so the
+# three commands cannot drift apart in defaults or help text, as --seed had.
+SIMS_OPT = typer.Option(10000, "--sims", help="Simulated weeks.")
+GAMES_OPT = typer.Option(None, "--games",
+                         help="Override average NBA games per team per week. "
+                              "Default: fit to the pulled NBA schedule.")
+PERIODS_OPT = typer.Option(None, "--periods",
+                           help="Stat windows to blend. Default: all present.")
+SEED_OPT = typer.Option(0, "--seed",
+                        help="Random seed. Use different values to check stability.")
+MIN_GP_OPT = typer.Option(5.0, "--min-gp",
+                          help="Ignore free agents below this many games.")
 
 
 def _cell(value) -> str:
@@ -201,14 +248,11 @@ def pull_cmd(
 @app.command("pulls")
 def pulls_cmd(limit: int = typer.Option(20, "--limit")):
     """List past pulls."""
-    try:
-        with db.connect(read_only=True) as con:
-            rows = con.execute(
-                "SELECT pull_id, league_key, pulled_at, status, note "
-                "FROM pulls ORDER BY pull_id DESC LIMIT ?", [limit]
-            ).fetchall()
-    except NoDatabase as exc:
-        fail(str(exc))
+    with read_only() as con:
+        rows = con.execute(
+            "SELECT pull_id, league_key, pulled_at, status, note "
+            "FROM pulls ORDER BY pull_id DESC LIMIT ?", [limit]
+        ).fetchall()
     render(
         [(p, lk, f"{t:%Y-%m-%d %H:%M}", s, (n or "")[:60]) for p, lk, t, s, n in rows],
         ["pull", "league", "pulled_at (UTC)", "status", "note"],
@@ -219,11 +263,8 @@ def pulls_cmd(limit: int = typer.Option(20, "--limit")):
 @app.command("tables")
 def tables_cmd():
     """Show every table and view with its row count."""
-    try:
-        with db.connect(read_only=True) as con:
-            rows = [(name, db.row_count(con, name)) for name in db.table_names(con)]
-    except NoDatabase as exc:
-        fail(str(exc))
+    with read_only() as con:
+        rows = [(name, db.row_count(con, name)) for name in db.table_names(con)]
     render(rows, ["name", "rows"], title=str(config.DB_PATH))
 
 
@@ -291,11 +332,8 @@ def _fmt(cat: dict, value) -> str:
 @app.command("rules")
 def rules_cmd():
     """Show the league rules the model runs under, and what it had to assume."""
-    try:
-        with db.connect(read_only=True) as con:
-            r = rules_mod.load(con)
-    except (NoDatabase, RuntimeError) as exc:
-        fail(str(exc))
+    with read_only() as con:
+        r = rules_mod.load(con)
 
     console.print(f"\n[bold]{r.name}[/bold]  [dim]{r.season} · {r.league_key}[/dim]\n")
     render(
@@ -320,25 +358,20 @@ def rules_cmd():
 def matchup_cmd(
     opponent: str = typer.Argument(None, help="Opponent: team key, id, or part of a name. Omitted: the whole league."),
     team: str = typer.Option(None, "--team", help="Team to analyse. Default: yours."),
-    sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
-    games: float = typer.Option(None, "--games",
-                                help="Override average NBA games per team per week. "
-                                     "Default: fit to the pulled NBA schedule."),
-    periods: str = typer.Option(None, "--periods", help="Stat windows to blend. Default: all present."),
-    seed: int = typer.Option(0, "--seed", help="Random seed. Use different values to check stability."),
+    sims: int = SIMS_OPT,
+    games: float = GAMES_OPT,
+    periods: str = PERIODS_OPT,
+    seed: int = SEED_OPT,
 ):
     """Category-by-category win probabilities against another team."""
-    window = [p.strip() for p in periods.split(",")] if periods else None
-    try:
-        with db.connect(read_only=True) as con:
-            if opponent is None:
-                report = matchup_mod.versus_field(con, team, window, sims, seed, games)
-                _render_field(report)
-            else:
-                report = matchup_mod.head_to_head(con, team, opponent, window, sims, seed, games)
-                _render_matchup(report)
-    except (NoDatabase, RuntimeError) as exc:
-        fail(str(exc))
+    window = _periods(periods)
+    with read_only() as con:
+        if opponent is None:
+            report = matchup_mod.versus_field(con, team, window, sims, seed, games)
+            _render_field(report)
+        else:
+            report = matchup_mod.head_to_head(con, team, opponent, window, sims, seed, games)
+            _render_matchup(report)
 
 
 def _render_matchup(r: dict) -> None:
@@ -393,24 +426,19 @@ def waivers_cmd(
     top: int = typer.Option(12, "--top", help="Moves to show."),
     drops: int = typer.Option(6, "--drops", help="How many of your players to consider dropping."),
     sims: int = typer.Option(4000, "--sims", help="Simulated weeks."),
-    games: float = typer.Option(None, "--games",
-                                help="Override average NBA games per team per week. "
-                                     "Default: fit to the pulled NBA schedule."),
-    min_gp: float = typer.Option(5.0, "--min-gp", help="Ignore free agents below this many games."),
-    periods: str = typer.Option(None, "--periods", help="Stat windows to blend. Default: all present."),
-    seed: int = typer.Option(0, "--seed", help="Random seed."),
+    games: float = GAMES_OPT,
+    min_gp: float = MIN_GP_OPT,
+    periods: str = PERIODS_OPT,
+    seed: int = SEED_OPT,
     by_player: bool = typer.Option(False, "--by-player",
                                    help="One row per free agent, with their best drop."),
 ):
     """Simulate free-agent pickups and rank them by the odds they buy."""
-    window = [p.strip() for p in periods.split(",")] if periods else None
-    try:
-        with console.status("[cyan]simulating[/cyan]"):
-            with db.connect(read_only=True) as con:
-                r = waiver_mod.add_drop(con, team, versus, window, sims, seed,
-                                        games, drops, top, min_gp)
-    except (NoDatabase, RuntimeError) as exc:
-        fail(str(exc))
+    window = _periods(periods)
+    with console.status("[cyan]simulating[/cyan]"):
+        with read_only() as con:
+            r = waiver_mod.add_drop(con, team, versus, window, sims, seed,
+                                    games, drops, top, min_gp)
 
     target = "the league" if len(r["opponents"]) > 1 else r["opponents"][0]["name"]
     base = r["baseline"]
@@ -429,12 +457,12 @@ def waivers_cmd(
         console.print("[yellow]No legal improving move found.[/yellow]")
         return
 
+    labels = {c["key"]: c["label"] for c in r["categories"]}
     rows = []
     for m in moves:
-        gains = sorted(m["categories"].items(), key=lambda kv: -kv[1])
-        labels = {c["key"]: c["label"] for c in r["categories"]}
-        helps = ", ".join(f"{labels[k]} +{100 * v:.0f}" for k, v in gains[:3] if v > 0.01)
-        hurts = ", ".join(f"{labels[k]} {100 * v:.0f}" for k, v in gains[-2:] if v < -0.01)
+        gains, costs = report_mod.movers(m["categories"])
+        helps = ", ".join(f"{labels[k]} +{100 * v:.0f}" for k, v in gains)
+        hurts = ", ".join(f"{labels[k]} {100 * v:.0f}" for k, v in costs)
         sign = "+" if m["delta_cats"] >= 0 else ""
         rows.append((
             f"{m['add']['name']} ({'/'.join(m['add']['positions'])})",
@@ -459,12 +487,10 @@ def report_cmd(
     team: str = typer.Option(None, "--team", help="Team to report on. Default: yours."),
     out: str = typer.Option(None, "--out", help="Where to write. Default: "
                             f"{report_mod.DEFAULT_OUT}. Use - for stdout."),
-    sims: int = typer.Option(10000, "--sims", help="Simulated weeks."),
-    games: float = typer.Option(None, "--games",
-                                help="Override average NBA games per team per week. "
-                                     "Default: fit to the pulled NBA schedule."),
-    seed: int = typer.Option(0, "--seed", help="Random seed."),
-    min_gp: float = typer.Option(5.0, "--min-gp", help="Ignore free agents below this many games."),
+    sims: int = SIMS_OPT,
+    games: float = GAMES_OPT,
+    seed: int = SEED_OPT,
+    min_gp: float = MIN_GP_OPT,
     top: int = typer.Option(10, "--top", help="Free agents to rank."),
 ):
     """
@@ -475,16 +501,13 @@ def report_cmd(
     explicit path keeps a dated copy. Progress and errors go to stderr either
     way, so a redirect always yields a clean document.
     """
-    try:
-        # The spinner must not touch stdout — `console` is bound to it, and a
-        # spinner frame in the middle of a markdown table would corrupt the file.
-        with err.status("[cyan]building report[/cyan]"):
-            with db.connect(read_only=True) as con:
-                data = report_mod.build(con, team=team, sims=sims, seed=seed,
-                                        games_per_week=games, top=top, min_gp=min_gp)
-        text = report_mod.render_markdown(data)
-    except (NoDatabase, RuntimeError) as exc:
-        fail(str(exc))
+    # The spinner must not touch stdout — `console` is bound to it, and a
+    # spinner frame in the middle of a markdown table would corrupt the file.
+    with err.status("[cyan]building report[/cyan]"):
+        with read_only() as con:
+            data = report_mod.build(con, team=team, sims=sims, seed=seed,
+                                    games_per_week=games, top=top, min_gp=min_gp)
+            text = report_mod.render_markdown(data)
 
     if out == "-":
         # Deliberately not console.print: rich would wrap the tables to terminal
@@ -511,21 +534,17 @@ def sql_cmd(
     limit: int = typer.Option(50, "--limit", help="Max rows to print. 0 for all."),
 ):
     """Run ad-hoc SQL."""
-    try:
-        with db.connect(read_only=True) as con:
-            try:
-                cursor = con.execute(query)
-            except Exception as exc:
-                fail(str(exc))
-            headers = [d[0] for d in cursor.description]
-            rows = cursor.fetchall()
-    except NoDatabase as exc:
-        fail(str(exc))
+    with read_only() as con:
+        try:
+            cursor = con.execute(query)
+        except Exception as exc:
+            fail(str(exc))
+        headers = [d[0] for d in cursor.description]
+        rows = cursor.fetchall()
 
     shown = rows if limit == 0 else rows[:limit]
     render(shown, headers)
-    if len(shown) < len(rows):
-        console.print(f"[dim]{len(shown)} of {len(rows)} rows — raise with --limit 0[/dim]")
+    _truncated(shown, rows)
 
 
 # --- rankings -------------------------------------------------------------
@@ -572,15 +591,12 @@ def rankings_show_cmd(
     limit: int = typer.Option(25, "--limit", help="Rows to show. 0 for all."),
 ):
     """Show the latest pull for a ranking source."""
-    try:
-        with db.connect(read_only=True) as con:
-            rows = con.execute(
-                "SELECT rank, player_name, team_abbr, positions, player_key "
-                "FROM v_player_rankings WHERE source = ? ORDER BY rank",
-                [source],
-            ).fetchall()
-    except NoDatabase as exc:
-        fail(str(exc))
+    with read_only() as con:
+        rows = con.execute(
+            "SELECT rank, player_name, team_abbr, positions, player_key "
+            "FROM v_player_rankings WHERE source = ? ORDER BY rank",
+            [source],
+        ).fetchall()
 
     if not rows:
         console.print(f"[yellow]No rankings stored for {source!r} yet.[/yellow] "
@@ -594,8 +610,7 @@ def rankings_show_cmd(
         ["rank", "player", "team", "pos", "player_key"],
         title=f"{source} — latest pull",
     )
-    if len(shown) < len(rows):
-        console.print(f"[dim]{len(shown)} of {len(rows)} rows — raise with --limit 0[/dim]")
+    _truncated(shown, rows)
 
 
 # --- schedule ---------------------------------------------------------------
@@ -606,8 +621,12 @@ def schedule_pull_cmd(
                                  "Default: inferred from today's date."),
 ):
     """Fetch the NBA game schedule and append it to the database."""
-    with console.status("[cyan]fetching schedule[/cyan]") as status:
-        result = schedule_mod.run(season, on_step=lambda msg: status.update(f"[cyan]{msg}[/cyan]"))
+    try:
+        with console.status("[cyan]fetching schedule[/cyan]") as status:
+            result = schedule_mod.run(
+                season, on_step=lambda msg: status.update(f"[cyan]{msg}[/cyan]"))
+    except Exception as exc:
+        fail(str(exc))
 
     if result.error:
         fail(f"{result.season} schedule pull failed: {result.error}")
@@ -634,11 +653,8 @@ def schedule_show_cmd(
         params += [team.upper(), team.upper()]
     query += " ORDER BY game_date"
 
-    try:
-        with db.connect(read_only=True) as con:
-            rows = con.execute(query, params).fetchall()
-    except NoDatabase as exc:
-        fail(str(exc))
+    with read_only() as con:
+        rows = con.execute(query, params).fetchall()
 
     if not rows:
         console.print(f"[yellow]No schedule stored for {season!r} yet.[/yellow] "
@@ -651,8 +667,7 @@ def schedule_show_cmd(
         ["date", "home", "away", "label"],
         title=f"{season} schedule" + (f" — {team.upper()}" if team else ""),
     )
-    if len(shown) < len(rows):
-        console.print(f"[dim]{len(shown)} of {len(rows)} rows — raise with --limit 0[/dim]")
+    _truncated(shown, rows)
 
 
 def main() -> None:
