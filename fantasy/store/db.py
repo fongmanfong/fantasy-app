@@ -3,6 +3,7 @@
 DuckDB takes an exclusive lock on the database file, so the connection is opened for
 the duration of a command and closed again — never held open across the process.
 """
+import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -144,6 +145,33 @@ def insert_schedule_rows(con, rows: list[dict], pull_id: int, season: str) -> in
     league_key — the schedule is the same for every league. Writable connection.
     """
     return _insert(con, "nba_schedule", rows, {"pull_id": pull_id, "season": season})
+
+
+def new_composite_run(con, kind: str, sources: dict, params: dict) -> int:
+    """
+    Open a composite run and return its id. See `new_pull`.
+
+    Unlike the three pull sequences this fetches nothing — but it is stamped and
+    closed the same way, because what makes an old ordering readable is knowing
+    which ranking pulls and which parameters produced it.
+    """
+    run_id = con.execute("SELECT nextval('composite_run_id_seq')").fetchone()[0]
+    con.execute(
+        "INSERT INTO composite_runs (run_id, kind, computed_at, status, sources, params) "
+        "VALUES (?, ?, ?, 'running', ?, ?)",
+        [run_id, kind, datetime.now(timezone.utc), json.dumps(sources), json.dumps(params)],
+    )
+    return run_id
+
+
+def complete_composite_run(con, run_id: int, status: str, note: str | None = None) -> None:
+    """Mark a composite run finished. Needs a writable connection."""
+    _complete(con, "composite_runs", "run_id", run_id, status, note)
+
+
+def insert_composite_rows(con, rows: list[dict], run_id: int) -> int:
+    """Append the reranked players of one run, stamping run_id. Writable connection."""
+    return _insert(con, "composite_rankings", rows, {"run_id": run_id})
 
 
 def columns_of(con, table: str) -> list[str]:

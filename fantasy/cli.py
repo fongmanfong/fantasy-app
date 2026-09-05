@@ -9,9 +9,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import config, pull as pull_mod, rankings as rankings_mod, report as report_mod, schedule as schedule_mod, server as server_mod
-from .analysis import (matchup as matchup_mod, rules as rules_mod,
-                       waiver as waiver_mod)
+from . import (composite as composite_mod, config, pull as pull_mod,
+               rankings as rankings_mod, report as report_mod,
+               schedule as schedule_mod, server as server_mod)
+from .analysis import (composite as composite_model, matchup as matchup_mod,
+                       rules as rules_mod, waiver as waiver_mod)
 from .sources.rankings import SOURCES
 from .sources.schedule import client as nba_client
 from .store import db
@@ -24,6 +26,9 @@ auth_app = typer.Typer(help="Authenticate with Yahoo.", no_args_is_help=True)
 app.add_typer(auth_app, name="auth")
 rankings_app = typer.Typer(help="Pull external player rankings into DuckDB.", no_args_is_help=True)
 app.add_typer(rankings_app, name="rankings")
+composite_app = typer.Typer(help="Fold every ranking source into one ordering.",
+                           no_args_is_help=True)
+rankings_app.add_typer(composite_app, name="composite")
 schedule_app = typer.Typer(help="Pull the NBA game schedule into DuckDB.", no_args_is_help=True)
 app.add_typer(schedule_app, name="schedule")
 
@@ -620,6 +625,146 @@ def rankings_show_cmd(
         title=f"{source} — latest pull",
     )
     _truncated(shown, rows)
+
+
+# --- rankings composite -----------------------------------------------------
+
+def _vote_cell(vote: dict | None) -> str:
+    """
+    One source's opinion of one player. A rank is what it said; the other three
+    are what the composite made of its silence, and are worth telling apart on
+    sight — see analysis/composite.py.
+    """
+    if vote is None:
+        return "·"                           # its list never reached him
+    if vote["kind"] == "inferred":
+        return f"~{int(vote['effective'])}"  # a guess at one of its empty slots
+    if vote["kind"] == "passed":
+        return "off"                         # long enough to have seen him
+    return str(vote["rank"])
+
+
+def _owners(con) -> dict[str, tuple[str, bool]]:
+    """player_key -> (team name, is mine), for whoever the snapshot has rostered."""
+    try:
+        rows = con.execute(
+            "SELECT player_key, team_name, is_my_team FROM v_roster_players").fetchall()
+    except Exception:
+        return {}
+    return {key: (name, bool(mine)) for key, name, mine in rows}
+
+
+@composite_app.command("build")
+def composite_build_cmd(
+    kind: str = typer.Option("dynasty", "--kind",
+                             help=f"Which lists to fold together. One of: "
+                                  f"{', '.join(composite_model.kinds())}"),
+    curve: float = typer.Option(composite_model.DEFAULT_CURVE, "--curve",
+                                help="Rank-to-value decay constant. Larger flattens "
+                                     "the curve; it moves scores far more than order."),
+    censor: float = typer.Option(composite_model.DEFAULT_CENSOR, "--censor",
+                                 help="Where a source's silence scores, as a multiple "
+                                      "of its list depth."),
+):
+    """Fold every stored ranking source into one ordering and append it."""
+    try:
+        with console.status("[cyan]compositing[/cyan]"):
+            result = composite_mod.run(kind=kind, curve=curve, censor=censor)
+    except Exception as exc:
+        # No database, no rankings of that kind, or the write failed — all of
+        # them are a one-line error here rather than a traceback.
+        fail(str(exc))
+
+    if result.error:
+        fail(f"composite failed: {result.error}")
+
+    console.print(f"\n[green]Composite run #{result.run_id}[/green] {kind} "
+                  f"— {result.players} players from {len(result.sources)} sources")
+    console.print("[dim]" + ", ".join(
+        f"{s} (pull #{p})" for s, p in sorted(result.sources.items())) + "[/dim]")
+    if result.passed:
+        console.print(f"[dim]{result.passed} votes came from a source leaving a player "
+                      "off a list long enough to have seen him.[/dim]")
+    for source, slots in sorted(result.hidden.items()):
+        console.print(f"[dim]{source} has {len(slots)} empty slots "
+                      f"({', '.join(str(s) for s in slots)}) — handed to its "
+                      "best-consensus omissions, shown as ~rank.[/dim]")
+    for pick in result.picks:
+        console.print(f"[dim]held out of the rerank: {pick['player_name']} "
+                      f"({pick['source']} #{pick['rank']}) is a draft pick.[/dim]")
+    console.print("\n[dim]`fantasy rankings composite show` to read it back.[/dim]")
+
+
+@composite_app.command("show")
+def composite_show_cmd(
+    kind: str = typer.Option("dynasty", "--kind", help="Which composite to read."),
+    limit: int = typer.Option(40, "--limit", help="Rows to show. 0 for all."),
+    team: str = typer.Option(None, "--team", help="Only players rostered by teams "
+                                                  "matching this text; 'me' for yours."),
+    min_spread: int = typer.Option(None, "--min-spread",
+                                   help="Only players the sources disagree on by at "
+                                        "least this many ranks."),
+):
+    """Show the stored composite ranking."""
+    with read_only() as con:
+        stored = composite_model.load(con, kind=kind)
+        owners = _owners(con)
+
+    sources = sorted(stored["sources"])
+    rows = stored["players"]
+
+    if team:
+        wanted = team.strip().lower()
+        rows = [p for p in rows
+                if p["player_key"] in owners
+                and (owners[p["player_key"]][1] if wanted == "me"
+                     else wanted in owners[p["player_key"]][0].lower())]
+    if min_spread is not None:
+        rows = [p for p in rows if (p["spread"] or 0) >= min_spread]
+
+    if not rows:
+        console.print("[yellow]No players match.[/yellow]")
+        return
+
+    # Everything here is squeezed — team and age share a column, names and team
+    # names are clipped, source headers are abbreviated — to keep eight columns
+    # inside an 80-column terminal. A board is read down the page; a row that
+    # wraps onto three lines is worse than a trimmed name, and the footer below
+    # spells the sources back out in full.
+    shown = rows if limit == 0 else rows[:limit]
+    render(
+        [(p["rank"], f"{p['score']:.1f}", _clip(p["player_name"], 18), _where(p))
+         + tuple(_vote_cell(p["votes"].get(s)) for s in sources)
+         + (_owner_cell(owners.get(p["player_key"])),)
+         for p in shown],
+        ["#", "score", "player", "tm/age"]
+        + [_clip(s.replace("_" + kind, ""), 4, "") for s in sources] + ["owner"],
+        title=f"Composite {kind} — run #{stored['run_id']}",
+    )
+    _truncated(shown, rows)
+    console.print(
+        f"[dim]{', '.join(f'{s} #{p}' for s, p in sorted(stored['sources'].items()))} "
+        f"| curve {stored['params'].get('curve')} censor {stored['params'].get('censor')} "
+        f"| off = seen and left off, ~n = inferred from an empty slot, "
+        f"· = list too short to say.[/dim]")
+
+
+def _clip(text: str, width: int, ellipsis: str = "…") -> str:
+    return text if len(text) <= width else text[:width - len(ellipsis)] + ellipsis
+
+
+def _where(player: dict) -> str:
+    """NBA team and age in one cell — two short facts not worth a column each."""
+    age = "" if player["age"] is None else f"{player['age']:.1f}"
+    return " ".join(x for x in (player["team_abbr"] or "", age) if x) or "-"
+
+
+def _owner_cell(owner: tuple[str, bool] | None) -> str:
+    """The holding team, clipped to fit, with the user's own marked."""
+    if owner is None:
+        return "-"
+    name, mine = owner
+    return ("*" if mine else " ") + _clip(name, 9)
 
 
 # --- schedule ---------------------------------------------------------------
