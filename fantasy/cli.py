@@ -553,8 +553,9 @@ def sql_cmd(
 def rankings_sources_cmd():
     """List the ranking sites this app knows how to scrape."""
     render(
-        [(name, src.url) for name, src in sorted(SOURCES.items())],
-        ["source", "default url"],
+        [(name, src.url, "last --url pulled" if src.remembers_url else "fixed")
+         for name, src in sorted(SOURCES.items())],
+        ["source", "default url", "defaults to"],
         title="Ranking sources",
     )
 
@@ -562,7 +563,9 @@ def rankings_sources_cmd():
 @rankings_app.command("pull")
 def rankings_pull_cmd(
     source: str = typer.Argument(..., help=f"Source to pull. One of: {', '.join(SOURCES)}"),
-    url: str = typer.Option(None, "--url", help="Override the source's default URL."),
+    url: str = typer.Option(None, "--url", help="Override the source's default URL. "
+                                                "For angle_dynasty this can be the "
+                                                "rankings post or the sheet itself."),
 ):
     """Scrape a ranking site and append it to the database."""
     try:
@@ -578,6 +581,12 @@ def rankings_pull_cmd(
         f"\n[green]Ranking pull #{result.ranking_pull_id}[/green] {source} "
         f"— {result.rows} players, {result.matched} matched to your league snapshot"
     )
+    console.print(f"[dim]from {result.source_url}[/dim]")
+    if result.fetched_url and result.fetched_url != result.source_url:
+        console.print(f"[dim]resolved to {result.fetched_url}[/dim]")
+    if result.remembered:
+        console.print("[dim]later pulls of this source reuse that URL — pass --url "
+                      "with a newer post or sheet when one is published.[/dim]")
     if result.matched < result.rows:
         console.print(
             f"[dim]{result.rows - result.matched} unmatched — likely a name spelled "

@@ -93,6 +93,19 @@ def new_ranking_pull(con, source: str, source_url: str) -> int:
     return ranking_pull_id
 
 
+def last_ranking_url(con, source: str) -> str | None:
+    """
+    The URL of the newest successful pull for a source, or None if it has never
+    been pulled. What `remembers_url` sources default to — see fantasy/rankings.py.
+    """
+    row = con.execute(
+        "SELECT source_url FROM ranking_pulls WHERE source = ? AND status = 'success' "
+        "ORDER BY ranking_pull_id DESC LIMIT 1",
+        [source],
+    ).fetchone()
+    return row[0] if row else None
+
+
 def complete_ranking_pull(con, ranking_pull_id: int, status: str, note: str | None = None) -> None:
     """Mark a ranking-site pull finished. Needs a writable connection."""
     _complete(con, "ranking_pulls", "ranking_pull_id", ranking_pull_id, status, note)

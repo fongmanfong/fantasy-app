@@ -97,8 +97,20 @@ with a league key, because neither is specific to one league.
 ```
 
 - **Rankings** (`sources/rankings/`) are a registry: each site is one module
-  with a pure `parse(html)` next to `hashtagbasketball.py`, registered in the
+  with a pure `parse(text)` next to `hashtagbasketball.py`, registered in the
   `SOURCES` dict. Adding a site changes nothing else in the app.
+- **`angle_dynasty` has no permanent URL.** Angle publishes each edition of its
+  Top 300 as a new WordPress post embedding a new Google Sheet, so that source
+  is registered `remembers_url=True`: the URL of its last successful pull is the
+  default for the next one, and `--url` only has to be given when a new edition
+  appears. It accepts the post, the embedded `pubhtml` link, an `/edit` sheet
+  URL or a CSV link alike — `angle.resolve` rewrites any of them to the sheet's
+  CSV export, following the post's `<iframe>` when given an article. Every row
+  carries the sheet's own title as `extra["edition"]`, so a stored ranking still
+  says which edition it is once the URL behind it has moved on.
+  ```sh
+  .venv/bin/fantasy rankings pull angle_dynasty --url <new post or sheet>
+  ```
 - **The schedule** (`sources/schedule/`) is stats.nba.com via `nba_api`, and it
   is what `projection.team_schedule` fits per-team games-per-week from. Without
   it the model falls back to a flat 3.5 and says so in `fantasy rules`.
@@ -226,11 +238,11 @@ the terminal would want, it belongs in `query.py` or `analysis/`.
   exit non-zero on failure. No network and no database *file* — `rules.py` and
   the report are tested against in-memory DuckDB fixtures.
   ```sh
-  .venv/bin/python tests/run_all.py          # all seven, one line each
+  .venv/bin/python tests/run_all.py          # all eight, one line each
   .venv/bin/python tests/test_analysis.py    # or any one on its own
   ```
-  The seven are `test_parse`, `test_analysis`, `test_report`, `test_names`,
-  `test_rankings`, `test_dynatyze`, `test_schedule`.
+  The eight are `test_parse`, `test_analysis`, `test_report`, `test_names`,
+  `test_rankings`, `test_dynatyze`, `test_angle`, `test_schedule`.
 - **Comments explain why, not what.** Docstrings are prose, not parameter lists.
   Match the surrounding density rather than annotating every line.
 - **Calibration constants carry their reasoning** in a comment above them

@@ -123,16 +123,40 @@ fantasy rankings pull hashtag_dynasty  # fetch + parse + store
 fantasy rankings show hashtag_dynasty  # the latest pull, ranked
 ```
 
+Three sources ship today: `hashtag_dynasty` and `dynatyze_dynasty`, both scrapes of a
+page at a fixed address, and `angle_dynasty` — Angle Fantasy Basketball's Top 300 9-cat
+list, three rankers plus a consensus average.
+
+Angle is the awkward one, and the reason `rankings pull` has the machinery it does: each
+edition is a new WordPress post embedding a new Google Sheet, so there is no permanent
+URL to point at. `--url` accepts any of the four forms you might have to hand — the
+rankings post, the embedded `pubhtml` link, a normal `/edit` sheet URL, or an
+`output=csv` link — and rewrites it to the sheet's CSV export (following the post's
+`<iframe>` when given an article). That URL is then remembered: the next
+`fantasy rankings pull angle_dynasty` reuses it, so you only pass `--url` when a new
+edition is published.
+
+```sh
+fantasy rankings pull angle_dynasty                      # the last URL pulled
+fantasy rankings pull angle_dynasty --url <new post>     # ...until a new edition
+```
+
+Each Angle row also carries the sheet's own title (`Top 300 9-Cat Dynasty Rankings July
+2026`) as `extra.edition`, alongside `average_rank`, each ranker's own number, and the
+movement arrow — so a stored ranking still says which edition it came from after the URL
+behind it has moved on.
+
 Each pull is matched against `v_players` by name and stamped with `player_key` where a
 confident match is found (case/punctuation/suffix-insensitive, no fuzzy matching — a
 genuine spelling mismatch is left unmatched rather than silently paired with the wrong
 player). `fantasy rankings pull` reports how many rows matched; the rest are typically
 players outside your league's snapshot rather than a matching bug.
 
-A source is a pure `parse(html) -> list[dict]` function registered in
-`fantasy/sources/rankings/__init__.py`; the network fetch is shared. Add a new site by
-writing one module next to `fantasy/sources/rankings/hashtagbasketball.py` and
-registering it — nothing else changes. Because each parser reads one site's actual
+A source is a pure `parse(text) -> list[dict]` function registered in
+`fantasy/sources/rankings/__init__.py`; the network fetch is shared, and a source that
+has to work out *where* to fetch from declares a `resolve` alongside its parser. Add a
+new site by writing one module next to `fantasy/sources/rankings/hashtagbasketball.py`
+and registering it — nothing else changes. Because each parser reads one site's actual
 template, it is scrape code tied to a specific site's markup, not a generic table
 scraper — expect it to need a one-file fix if that site redesigns its rankings page.
 
@@ -404,7 +428,9 @@ fantasy/
 │   ├── rankings/
 │   │   ├── fetch.py             # shared HTTP GET for ranking sites
 │   │   ├── hashtagbasketball.py # pure HTML → rows parser, one file per site
-│   │   └── dynatyze.py          # pure JSON-LD → rows parser
+│   │   ├── dynatyze.py          # pure JSON-LD → rows parser
+│   │   └── angle.py             # Google Sheet CSV → rows, plus the URL rewriting
+│   │                            # that finds the sheet behind a rankings post
 │   └── schedule/
 │       ├── client.py # fetch the schedule from stats.nba.com (via nba_api)
 │       └── parse.py  # raw payload → flat rows (pure functions)
@@ -425,9 +451,10 @@ docs/
 `tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures,
 `tests/test_analysis.py` the simulation math against hand-built players,
 `tests/test_report.py` the report's formatting and derivations against a fixture
-document, `tests/test_names.py` the name standardizer, `tests/test_rankings.py`
-and `tests/test_dynatyze.py` each ranking-site scraper against a saved fixture of
-that site's real markup, and `tests/test_schedule.py` the schedule parser against
+document, `tests/test_names.py` the name standardizer, `tests/test_rankings.py`,
+`tests/test_dynatyze.py` and `tests/test_angle.py` each ranking source against a
+saved fixture of what that site really serves (plus, for Angle, the sheet-URL
+rewriting), and `tests/test_schedule.py` the schedule parser against
 a ScheduleLeagueV2-shaped fixture. None touches the network or a database file:
 
 ```sh
