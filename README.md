@@ -73,6 +73,8 @@ fantasy report                       # one standing report, for you or an agent
 | `fantasy rankings sources` | List the ranking sites this app knows how to scrape. |
 | `fantasy rankings pull SOURCE` | Scrape a ranking site and append it to the database. |
 | `fantasy rankings show SOURCE` | Show the latest pull for a ranking source. |
+| `fantasy rankings composite build` | Fold every ranking source into one ordering and store it. |
+| `fantasy rankings composite show` | Show the stored composite ranking. |
 | `fantasy schedule pull [SEASON]` | Fetch the NBA game schedule and append it to the database. |
 | `fantasy schedule show` | Show the latest pulled schedule, optionally filtered by team. |
 
@@ -160,6 +162,46 @@ and registering it — nothing else changes. Because each parser reads one site'
 template, it is scrape code tied to a specific site's markup, not a generic table
 scraper — expect it to need a one-file fix if that site redesigns its rankings page.
 
+### One ranking out of several
+
+Each source ranks the same players against a different depth and a different house
+view. `fantasy rankings composite build` folds every source of the same kind into a
+single ordering and appends it to the database; `show` reads it back.
+
+```sh
+fantasy rankings composite build              # recompute and append a run
+fantasy rankings composite show               # the stored ordering, top 40
+fantasy rankings composite show --team me     # ...restricted to your roster
+fantasy rankings composite show --min-spread 40   # where the sources disagree most
+```
+
+```
+ #   score  player             tm/age    angl  dyna  hash  owner
+ 11  88.3   Cameron Boozer     MEM 19.1  12    ~12   9     -
+ 17  80.9   Evan Mobley        CLE 25.2  21    18    15    *Red Eyes…
+ 88  33.7   Keegan Murray      SAC 26.0  114   off   70    *Red Eyes…
+100  29.8   Ace Bailey         UTA 20.1  92    ·     104   *Red Eyes…
+```
+
+A rank becomes a value on a decay curve (#1 vs #10 is worth far more than #200 vs
+#210) and the scores are averaged, but the ordering is decided by how *absence* is
+read, and the table says which of the three cases each cell is:
+
+- a number — the source ranked him there;
+- `off` — the source's list is long enough that it saw him and left him off, so it
+  votes just past its own end;
+- `·` — the source's list is too short to reach him, so it abstains rather than
+  voting against him;
+- `~n` — the source's numbering has a slot with no row in it (dynatyze's markup
+  drops 7 of its top 75), and this is a guess at who holds it, ranked by where the
+  other sources put the players it omitted.
+
+Draft picks that a source ranks inline with players (`2027 Early 1st`) keep their
+slot but are held out of the rerank. Each run records the ranking pull ids and the
+parameters behind it, so an old ordering stays readable after those pulls have been
+superseded, and a rebuild appends rather than overwrites. The method, and the
+reasoning for each rule, is in `fantasy/analysis/composite.py`.
+
 ```sql
 -- Rankings joined against your roster
 SELECT r.rank, r.player_name, r.team_abbr, p.selected_position
@@ -239,6 +281,16 @@ Ranking tables, on their own pull sequence (not tied to a `league_key`):
 | `player_rankings` | One row per (source, player): rank, name, team, positions, age, `player_key` if matched, and source-specific fields as JSON in `extra`. |
 
 `v_player_rankings` resolves to the latest successful pull per source.
+
+Composite tables, derived from those rankings rather than pulled, on the same
+append-only footing:
+
+| Table | Contents |
+|---|---|
+| `composite_runs` | One row per `fantasy rankings composite build`: kind, timestamp, status, the ranking pull ids folded in and the parameters used, both as JSON. |
+| `composite_rankings` | One row per player per run, already in composite order: score, consensus, spread, and each source's vote as JSON in `votes`. |
+
+`v_composite_rankings` resolves to the newest successful run per kind.
 
 NBA schedule tables, on their own pull sequence (keyed by `season`, not `league_key`):
 
@@ -369,7 +421,7 @@ Each entry point takes an open connection and returns plain dicts:
 
 ```python
 from fantasy.store import db
-from fantasy.analysis import matchup, waiver
+from fantasy.analysis import composite, matchup, waiver
 
 with db.connect(read_only=True) as con:
     report = matchup.head_to_head(con, team_b="Guan Yu", sims=20000)
@@ -377,6 +429,9 @@ with db.connect(read_only=True) as con:
 
     moves = waiver.add_drop(con, opponent="Starboy")
     print(moves["moves"][0]["add"]["name"], moves["moves"][0]["delta_cats"])
+
+    board = composite.load(con)          # the stored composite; build() recomputes
+    print(board["players"][0]["player_name"], board["players"][0]["score"])
 ```
 
 ### Example queries
@@ -411,6 +466,7 @@ WHERE team_key = (SELECT team_key FROM v_teams WHERE is_my_team)
 fantasy/
 ├── cli.py            # Typer commands
 ├── config.py         # env + paths
+├── composite.py      # fold every ranking source into one ordering, append to DuckDB
 ├── names.py          # normalize() — the join key between an outside name and a Yahoo one
 ├── pull.py           # snapshot orchestration
 ├── query.py          # read-side queries over the latest snapshot
@@ -423,7 +479,8 @@ fantasy/
 │   ├── projection.py # player -> weekly rates, variance, availability
 │   ├── simulate.py   # Monte Carlo engine, one column per player
 │   ├── matchup.py    # head-to-head and against-the-field odds
-│   └── waiver.py     # free-agent add/drop search
+│   ├── waiver.py     # free-agent add/drop search
+│   └── composite.py  # many ranking sources -> one ordering, and reading it back
 ├── sources/          # everything pulled in besides your Yahoo league
 │   ├── rankings/
 │   │   ├── fetch.py             # shared HTTP GET for ranking sites
@@ -454,8 +511,10 @@ docs/
 document, `tests/test_names.py` the name standardizer, `tests/test_rankings.py`,
 `tests/test_dynatyze.py` and `tests/test_angle.py` each ranking source against a
 saved fixture of what that site really serves (plus, for Angle, the sheet-URL
-rewriting), and `tests/test_schedule.py` the schedule parser against
-a ScheduleLeagueV2-shaped fixture. None touches the network or a database file:
+rewriting), `tests/test_schedule.py` the schedule parser against a ScheduleLeagueV2-shaped
+fixture, and `tests/test_composite.py` the composite's folding rules and its round
+trip through the store. None touches the network; only the last touches a
+database, and that one is in-memory:
 
 ```sh
 .venv/bin/python tests/run_all.py          # all of them, one line each

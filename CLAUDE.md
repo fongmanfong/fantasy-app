@@ -92,6 +92,8 @@ with a league key, because neither is specific to one league.
 .venv/bin/fantasy rankings sources           # what this app knows how to scrape
 .venv/bin/fantasy rankings pull hashtag_dynasty
 .venv/bin/fantasy rankings show hashtag_dynasty
+.venv/bin/fantasy rankings composite build   # fold every source into one ordering
+.venv/bin/fantasy rankings composite show --team me
 .venv/bin/fantasy schedule pull              # season inferred from today's date
 .venv/bin/fantasy schedule show --team BOS
 ```
@@ -111,6 +113,18 @@ with a league key, because neither is specific to one league.
   ```sh
   .venv/bin/fantasy rankings pull angle_dynasty --url <new post or sheet>
   ```
+- **One ranking out of several.** `rankings composite build` folds every source
+  of the same registry `kind` (`Source.kind`, currently all `dynasty`) into one
+  ordering and appends it as a `composite_runs` row plus its `composite_rankings`
+  — derived rather than pulled, but on the same append-only footing, with the
+  ranking pull ids and the parameters recorded so an old ordering is still
+  legible after the pulls behind it have moved on. The method is in
+  `analysis/composite.py` and the judgment calls are all about **absence**: a
+  source that ranks 400 and leaves someone off has said something, a source that
+  publishes 75 has not, and a slot that exists in a source's numbering with no
+  row in it (dynatyze has 7) is a hole in the scrape rather than either. Read
+  that module's docstring before changing the numbers — the decay curve barely
+  moves the order, and those three rules move players tens of places.
 - **The schedule** (`sources/schedule/`) is stats.nba.com via `nba_api`, and it
   is what `projection.team_schedule` fits per-team games-per-week from. Without
   it the model falls back to a flat 3.5 and says so in `fantasy rules`.
@@ -134,7 +148,7 @@ returns plain dicts:
 
 ```python
 from fantasy.store import db
-from fantasy.analysis import matchup, projection, rules, waiver
+from fantasy.analysis import composite, matchup, projection, rules, waiver
 
 with db.connect(read_only=True) as con:
     rules.load(con)                                   # refuses leagues it can't model
@@ -142,6 +156,7 @@ with db.connect(read_only=True) as con:
     matchup.versus_field(con)
     waiver.add_drop(con, opponent="Starboy", sims=8000)
     projection.build(con)                             # per-player rates, before simulation
+    composite.load(con)                               # the stored composite ranking
 ```
 
 `matchup.prepare(con, ...)` returns `(players, draws, rules)` if you want to
@@ -181,6 +196,7 @@ fantasy/
 ├── templates/        app.html, the single page `fantasy view` serves
 ├── pull.py           league snapshot orchestration; a failed step is recorded, the rest continues
 ├── rankings.py       ranking-site pull orchestration
+├── composite.py      composite-run orchestration; the only writer that reads first
 ├── schedule.py       NBA schedule pull orchestration
 ├── yahoo/            auth, client, parse (parsers pure, no I/O)
 ├── sources/          everything pulled in besides your Yahoo league
@@ -192,7 +208,8 @@ fantasy/
     ├── projection.py player -> per-game rates, variance, availability
     ├── simulate.py   Monte Carlo; one column per player
     ├── matchup.py    head-to-head and against-the-field
-    └── waiver.py     add/drop search + lineup legality
+    ├── waiver.py     add/drop search + lineup legality
+    └── composite.py  many ranking sources -> one ordering; build() and load()
 ```
 
 `cli.py` is presentation, but it is not *only* rendering: a few commands build
@@ -208,6 +225,19 @@ the terminal would want, it belongs in `query.py` or `analysis/`.
   of `v_*` views resolves to the newest successful pull *of its own kind*, so a
   stale schedule and a fresh league snapshot coexist happily. Keep it that way;
   accumulated history is the basis for several planned improvements.
+  `composite_runs` is **not** a fourth pull sequence — nothing there comes off
+  the wire — but it is stamped and resolved the same way, and `composite build`
+  appends a run rather than replacing one, so two orderings can be compared.
+- **The schema documents itself in the catalogue.** Every table, view and
+  non-obvious column carries a `COMMENT`, applied by the block at the end of
+  `schema.sql`. They are readable from a read-only connection, so
+  `select table_name, column_name, comment from duckdb_columns()` is the
+  fastest way to learn the store from a `duckdb` shell without opening this
+  file. Two things to know: **the comment block must stay last**, because
+  `CREATE OR REPLACE VIEW` drops the comments on the view it replaces; and
+  comments only land when `init_schema` runs, which is inside the three pull
+  commands — an existing database picks up new ones on its next pull, or
+  from `db.init_schema` on a writable connection.
 - **Parsers are pure.** `yahoo/parse.py` takes Yahoo-shaped dicts and returns
   flat rows, no network. That is why it is testable.
 - **Analysis returns plain dicts.** The CLI, the JSON server and a REPL all use
@@ -238,11 +268,14 @@ the terminal would want, it belongs in `query.py` or `analysis/`.
   exit non-zero on failure. No network and no database *file* — `rules.py` and
   the report are tested against in-memory DuckDB fixtures.
   ```sh
-  .venv/bin/python tests/run_all.py          # all eight, one line each
+  .venv/bin/python tests/run_all.py          # all nine, one line each
   .venv/bin/python tests/test_analysis.py    # or any one on its own
   ```
-  The eight are `test_parse`, `test_analysis`, `test_report`, `test_names`,
-  `test_rankings`, `test_dynatyze`, `test_angle`, `test_schedule`.
+  The nine are `test_parse`, `test_analysis`, `test_report`, `test_names`,
+  `test_rankings`, `test_dynatyze`, `test_angle`, `test_schedule`,
+  `test_composite`. The last one is the exception to "no database": it builds
+  the real `schema.sql` in an in-memory DuckDB, because half of what it is
+  checking is the round trip through the store.
 - **Comments explain why, not what.** Docstrings are prose, not parameter lists.
   Match the surrounding density rather than annotating every line.
 - **Calibration constants carry their reasoning** in a comment above them

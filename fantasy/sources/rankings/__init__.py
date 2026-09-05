@@ -17,6 +17,8 @@ Row dicts share a common shape:
 
 Add a new site by writing one module with a `parse_xxx(text)` function next to
 hashtagbasketball.py and registering it below — nothing else in the app changes.
+An entry's `kind` says which lists it is comparable with, and is the only thing
+`fantasy rankings composite` uses to decide what to average together.
 """
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -40,9 +42,15 @@ class Source:
     `remembers_url` makes the *last successfully pulled* URL the default for the
     next pull, so a `--url` pointing at a newer edition only has to be given
     once. `url` is then a seed for the first pull rather than a fixed address.
+
+    `kind` is what the list is *of*. Sources only mean the same thing — and are
+    only comparable, as `analysis/composite.py` compares them — when they rank
+    on the same axis, so a redraft or keeper list registered here would carry a
+    different kind and be composited separately rather than averaged in.
     """
     url: str
     parse: Callable[[str], list[dict]]
+    kind: str = "dynasty"
     resolve: Callable[[str, Callable[[str], str]], str] | None = None
     remembers_url: bool = False
 
@@ -51,14 +59,17 @@ SOURCES: dict[str, Source] = {
     "hashtag_dynasty": Source(
         url=hashtagbasketball.DYNASTY_URL,
         parse=hashtagbasketball.parse_dynasty,
+        kind="dynasty",
     ),
     "dynatyze_dynasty": Source(
         url=dynatyze.DYNASTY_URL,
         parse=dynatyze.parse_dynasty,
+        kind="dynasty",
     ),
     "angle_dynasty": Source(
         url=angle.DYNASTY_URL,
         parse=angle.parse_dynasty,
+        kind="dynasty",
         resolve=angle.resolve,
         remembers_url=True,
     ),

@@ -11,11 +11,18 @@ requests the page URL itself, which robots.txt allows. Instead this reads the
 same server-rendered HTML for SEO (a schema.org ItemList): same page, same
 allowed path, no JS execution required.
 
-That block only lists ranked players — draft picks are a separate, non-Person
-entity dynatyze leaves out of it — and is capped at whatever tier a logged-out
-visitor gets (currently ranks 1-75ish). It carries no age, so `age` is always
-None here; `extra` carries the one dynatyze-specific figure, its 0-9999 dynasty
-value.
+That block is capped at whatever tier a logged-out visitor gets (currently ranks
+1-75ish) and it carries no age, so `age` is always None here; `extra` carries the
+one dynatyze-specific figure, its 0-9999 dynasty value.
+
+Two things about what it contains. Future draft picks are ranked inline with the
+players and do come through as Person entries ("2027 Early 1st" at #41 as of the
+July 2026 list), so a caller ranking *players* has to drop them — analysis/
+composite.py does. And the block is **sparser than its own numbering**: a handful
+of positions inside the top 75 carry no element at all, so the ranks are not
+contiguous and the row count is short of the deepest rank. Whoever holds those
+slots does not reach this scrape. Do not renumber to close the gaps — the ranks
+are dynatyze's, and a missing one is information.
 """
 import json
 import re
@@ -51,7 +58,7 @@ def parse_dynasty(html: str) -> list[dict]:
     for element in item_lists[0].get("itemListElement", []):
         item = element.get("item", {})
         if item.get("@type") != "Person":
-            continue  # draft picks etc. aren't listed as Person entries
+            continue  # anything but a ranked entity, should the block gain one
         position = item.get("jobTitle")
         value = next(
             (p["value"] for p in [item.get("additionalProperty", {})]
