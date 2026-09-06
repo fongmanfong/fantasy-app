@@ -102,6 +102,7 @@ with a league key, because none is specific to one league.
 .venv/bin/fantasy rankings sources           # what this app knows how to scrape
 .venv/bin/fantasy rankings pull hashtag_dynasty
 .venv/bin/fantasy rankings show hashtag_dynasty
+.venv/bin/fantasy rankings show hashtag_dynasty --notes   # its written commentary
 .venv/bin/fantasy rankings composite build   # fold every source into one ordering
 .venv/bin/fantasy rankings composite show --team me
 .venv/bin/fantasy schedule pull              # season inferred from today's date
@@ -137,6 +138,13 @@ with a league key, because none is specific to one league.
   row in it (dynatyze has 7) is a hole in the scrape rather than either. Read
   that module's docstring before changing the numbers — the decay curve barely
   moves the order, and those three rules move players tens of places.
+- **Only one source writes prose.** hashtagbasketball puts a "Dynasty Outlook"
+  next to some of its numbers, stored as `extra["outlook"]` and read with
+  `rankings show --notes`. Angle and dynatyze publish none — checked against
+  Angle's raw CSV and dynatyze's own `dynasty-rankings.md` endpoint, and written
+  into both module docstrings so it is not re-investigated. `extra` is a JSON
+  column and `db._insert` drops unknown keys, so enriching what a parser returns
+  needs no migration.
 - **The schedule** (`sources/schedule/`) is stats.nba.com via `nba_api`, and it
   is what `projection.team_schedule` fits per-team games-per-week from. Without
   it the model falls back to a flat 3.5 and says so in `fantasy rules`.

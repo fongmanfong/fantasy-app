@@ -37,6 +37,8 @@ class _DynastyParser(HTMLParser):
             <div class="alert ..."><strong>Keeper</strong><span class="v">#4</span></div>
             <div class="alert ..."><strong>Keeper Value</strong><span class="v">2309</span></div>
         </div>
+        ...
+        <div class="dyn-outlook">Only 3 guards have averaged 30+ points ...</div>
 
     The last badge is always an age ("30.5yo"), the one before it a team code;
     anything earlier is eligible positions, which — unlike the team — can be absent
@@ -45,6 +47,13 @@ class _DynastyParser(HTMLParser):
     all three dyn-values labels have been seen (a value span can be empty, so the count
     is checked on the closing tag, not on receiving text), which avoids having to track
     div-nesting depth to find where a card actually ends.
+
+    `dyn-outlook` is the site's written note on the player, and it sits *after* the
+    values that complete the card — so it is attached to the row already appended
+    rather than to `_cur`, and only when this card is the one that appended it.
+    Hashtag writes it for a minority of players (99 of 400 on the September 2026
+    board, but 46 of the top 50), so its absence is normal and stays `None` rather
+    than an empty string. It is the only prose any registered source publishes.
     """
 
     def __init__(self):
@@ -54,12 +63,24 @@ class _DynastyParser(HTMLParser):
         self._skip = 0
         self._cur: dict | None = None
         self._label: str | None = None
+        self._outlook: str | None = None   # text being collected, None when outside one
+        self._depth = 0                    # div nesting inside the outlook
+        self._appended = False             # this card reached rows; the outlook is its
 
     def handle_starttag(self, tag, attrs):
         classes = _classes(attrs)
+        if self._outlook is not None:
+            self._depth += 1        # a tag inside the prose; keep collecting through it
+            return
         if tag == "div" and "dyn-card" in classes:
             self._cur = {"_name": "", "badges": [], "values": {}}
             self._mode = None
+            self._appended = False
+            return
+        if tag == "div" and "dyn-outlook" in classes:
+            # Deliberately outside the `_cur is None` guard below: the card that
+            # owns this note was completed by its third value, several tags ago.
+            self._outlook, self._depth = "", 1
             return
         if self._cur is None:
             return
@@ -79,6 +100,14 @@ class _DynastyParser(HTMLParser):
                 self._cur["values"].setdefault(self._label, "")
 
     def handle_endtag(self, tag):
+        if self._outlook is not None:
+            self._depth -= 1
+            if self._depth == 0:
+                text = " ".join(self._outlook.split())
+                if text and self._appended:
+                    self.rows[-1]["extra"]["outlook"] = text
+                self._outlook = None
+            return
         if tag == "span" and self._skip:
             self._skip -= 1
             return
@@ -92,6 +121,9 @@ class _DynastyParser(HTMLParser):
             self._mode = None
 
     def handle_data(self, data):
+        if self._outlook is not None:
+            self._outlook += data
+            return
         if self._skip or self._cur is None or self._mode is None:
             return
         if self._mode == "name":
@@ -135,8 +167,10 @@ class _DynastyParser(HTMLParser):
             "extra": {
                 "keeper_rank": rank_of("Keeper"),
                 "keeper_value": rank_of("Keeper Value"),
+                "outlook": None,        # filled in later if this card carries one
             },
         })
+        self._appended = True
 
 
 def parse_dynasty(html: str) -> list[dict]:

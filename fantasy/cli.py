@@ -607,8 +607,15 @@ def rankings_pull_cmd(
 def rankings_show_cmd(
     source: str = typer.Argument(..., help=f"Source to show. One of: {', '.join(SOURCES)}"),
     limit: int = typer.Option(25, "--limit", help="Rows to show. 0 for all."),
+    notes: bool = typer.Option(False, "--notes", help="Show the source's written note "
+                                                      "on each player instead of the "
+                                                      "table, skipping players with none."),
 ):
     """Show the latest pull for a ranking source."""
+    if notes:
+        _ranking_notes(source, limit)
+        return
+
     with read_only() as con:
         rows = con.execute(
             "SELECT rank, player_name, team_abbr, positions, player_key "
@@ -628,6 +635,34 @@ def rankings_show_cmd(
         ["rank", "player", "team", "pos", "player_key"],
         title=f"{source} — latest pull",
     )
+    _truncated(shown, rows)
+
+
+def _ranking_notes(source: str, limit: int) -> None:
+    """
+    The prose a source publishes next to its numbers, longest-form output there
+    is here — a paragraph per player does not belong in a table.
+
+    Only hashtagbasketball writes any, and only for a minority of its players,
+    so an empty result is a fact about the source rather than a failed pull.
+    """
+    with read_only() as con:
+        rows = con.execute(
+            "SELECT rank, player_name, json_extract_string(extra, '$.outlook') AS note "
+            "FROM v_player_rankings WHERE source = ? AND note IS NOT NULL ORDER BY rank",
+            [source],
+        ).fetchall()
+
+    if not rows:
+        console.print(f"[yellow]{source} publishes no commentary[/yellow] — only "
+                      "hashtag_dynasty does, and only for some players.")
+        return
+
+    shown = rows if limit == 0 else rows[:limit]
+    console.print(f"\n[bold]{source}[/bold] — {len(rows)} players with a note\n")
+    for rank, name, note in shown:
+        console.print(f"[cyan]#{rank}[/cyan] [bold]{name}[/bold]")
+        console.print(f"  [dim]{note}[/dim]\n")
     _truncated(shown, rows)
 
 

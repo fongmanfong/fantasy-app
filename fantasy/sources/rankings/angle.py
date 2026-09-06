@@ -28,6 +28,13 @@ things follow from that, and together they are the whole design here:
   carried on every row as `extra["edition"]`, so a stored ranking says which
   edition it came from even after the URL it came from has been superseded.
 
+**There is no commentary to capture here.** The September 2026 export is 326
+rows of exactly nine columns — Rank, Movement, Player, Age, Movement, the three
+rankers, Average Rank — and the only free text anywhere in the file is the
+title and a "scroll right" tip, both in row 0. Every column is already parsed
+below, so unlike hashtagbasketball there is no `extra["outlook"]` to add. Worth
+re-checking only if the column count changes.
+
 The parser reads the header row by name rather than by position, because the
 individual rankers are people and the column set changes when the roster of
 rankers does — any column that isn't one of the known ones is taken to be a

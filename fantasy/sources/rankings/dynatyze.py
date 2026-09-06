@@ -15,6 +15,18 @@ That block is capped at whatever tier a logged-out visitor gets (currently ranks
 1-75ish) and it carries no age, so `age` is always None here; `extra` carries the
 one dynatyze-specific figure, its 0-9999 dynasty value.
 
+**There is no commentary to capture here.** A Person entry carries name, url,
+jobTitle, affiliation and the dynasty value — no prose. Nor is there any on the
+per-player profile pages `extra["profile_url"]` points at: those render client
+side and serve an empty shell. Dynatyze also publishes a sanctioned
+machine-readable board at `dynasty-rankings.md` (announced in its own llms.txt,
+also reachable with `Accept: text/markdown`), and that is likewise five columns
+of rank, player, position, team and value with no notes. It is worth knowing
+about for other reasons — it tags picks as position `PICK` on team `DRAFT`,
+which is sturdier than matching their names, and it shows the same 68 rows with
+the same seven gaps, confirming those are dynatyze's own and not a scraping
+artefact — but it carries nothing this parser is missing.
+
 Two things about what it contains. Future draft picks are ranked inline with the
 players and do come through as Person entries ("2027 Early 1st" at #41 as of the
 July 2026 list), so a caller ranking *players* has to drop them — analysis/
