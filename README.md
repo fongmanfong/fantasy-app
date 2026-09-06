@@ -72,7 +72,7 @@ fantasy report                       # one standing report, for you or an agent
 | `fantasy sql "<query>"` | Run ad-hoc SQL. |
 | `fantasy rankings sources` | List the ranking sites this app knows how to scrape. |
 | `fantasy rankings pull SOURCE` | Scrape a ranking site and append it to the database. |
-| `fantasy rankings show SOURCE` | Show the latest pull for a ranking source. |
+| `fantasy rankings show SOURCE` | Show the latest pull for a ranking source; `--notes` for its written commentary. |
 | `fantasy rankings composite build` | Fold every ranking source into one ordering and store it. |
 | `fantasy rankings composite show` | Show the stored composite ranking. |
 | `fantasy schedule pull [SEASON]` | Fetch the NBA game schedule and append it to the database. |
@@ -125,6 +125,7 @@ output against outside opinion, or feeding a ranking into analysis later.
 fantasy rankings sources               # sites this app knows how to scrape
 fantasy rankings pull hashtag_dynasty  # fetch + parse + store
 fantasy rankings show hashtag_dynasty  # the latest pull, ranked
+fantasy rankings show hashtag_dynasty --notes   # ...and what it wrote about them
 ```
 
 Three sources ship today: `hashtag_dynasty` and `dynatyze_dynasty`, both scrapes of a
@@ -149,6 +150,33 @@ Each Angle row also carries the sheet's own title (`Top 300 9-Cat Dynasty Rankin
 2026`) as `extra.edition`, alongside `average_rank`, each ranker's own number, and the
 movement arrow — so a stored ranking still says which edition it came from after the URL
 behind it has moved on.
+
+### Commentary
+
+Ranking sites sometimes publish a written note beside the number, and where one exists
+it is stored on the row as `extra.outlook`:
+
+```
+#4 Nikola Jokic
+  He's not 4th because he has regressed in any way or because I'm down on him. We just
+  now have 3 comparable players who are a lot younger, and we have to factor in age
+  when ranking players in dynasty.
+```
+
+Only **hashtag_dynasty** publishes any, and only for some players — 99 of 400 on the
+September 2026 board, though 46 of the top 50. The other two carry none, and that is a
+property of the sources rather than a gap in the scrapers: Angle's sheet is nine
+columns of numbers with no prose in any of them, and Dynatyze's board has no notes
+field in either its embedded JSON-LD or the sanctioned `dynasty-rankings.md` variant it
+advertises for machine readers. Both parsers say so in their module docstrings so the
+question does not have to be re-investigated.
+
+```sql
+SELECT rank, player_name, json_extract_string(extra, '$.outlook') AS note
+FROM v_player_rankings
+WHERE source = 'hashtag_dynasty' AND note IS NOT NULL
+ORDER BY rank;
+```
 
 Each pull is matched against `v_players` by name and stamped with `player_key` where a
 confident match is found (case/punctuation/suffix-insensitive, no fuzzy matching — a
