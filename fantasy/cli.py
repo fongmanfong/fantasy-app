@@ -355,8 +355,9 @@ def rules_cmd():
     )
     if r.assumed:
         console.print("[dim]Assumed rules are not in the snapshot. `fantasy pull` "
-                      "refreshes what Yahoo does expose; the rest are tracked as "
-                      "known gaps in docs/ALGORITHMS.md.[/dim]")
+                      "refreshes what Yahoo does expose; docs/LEAGUES.md is where "
+                      "the rest are written down by hand, and docs/ALGORITHMS.md "
+                      "tracks them as known gaps.[/dim]")
 
 
 @app.command("matchup")

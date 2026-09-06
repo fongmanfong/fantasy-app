@@ -70,6 +70,14 @@ changes the answer, ranked by how little the model knows about them.
 `reports/summary.md` is always the current report at a fixed, known path —
 read it directly rather than guessing a filename. `reports/` is gitignored.
 
+**Read [docs/LEAGUES.md](docs/LEAGUES.md) alongside it.** That is the hand-written
+record of what each league actually does — the settings Yahoo never returned, which
+is most of them. It outranks every `assumed` row in `fantasy rules`; the snapshot
+still outranks it for anything Yahoo did return. A field written `?` there is
+**unknown, not the default** — if an answer depends on one, say so rather than
+quietly assuming. It is also the only place leagues other than `466.l.28641`
+exist at all.
+
 The rest of the CLI answers narrower questions:
 
 ```sh
