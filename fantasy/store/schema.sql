@@ -355,6 +355,102 @@ GROUP BY kind;
 CREATE OR REPLACE VIEW v_composite_rankings AS
 SELECT c.* FROM composite_rankings c JOIN latest_composite_run r USING (run_id);
 
+-- --- NBA player seasons ---
+--
+-- Past-season player totals from stats.nba.com, one row per (player, season).
+-- The fourth independent pull sequence, keyed by NBA season like the schedule
+-- and belonging to no league. Unlike `player_stats` this is *wide*: that table
+-- is long so a league changing its scoring categories needs no migration, but
+-- nba.com's box-score columns are fixed by the endpoint rather than by a
+-- league, so there is nothing here for a long format to protect against.
+--
+-- What this adds that the Yahoo snapshot cannot: several seasons of the same
+-- player. A snapshot holds one season, and its four stat windows collapse to
+-- identical full-season figures once the season is over, so trend, durability
+-- and age curves are unanswerable from Yahoo alone.
+
+CREATE SEQUENCE IF NOT EXISTS nba_season_pull_id_seq START 1;
+
+CREATE TABLE IF NOT EXISTS nba_season_pulls (
+    pull_id    BIGINT PRIMARY KEY,
+    season     VARCHAR NOT NULL,      -- e.g. '2025-26'
+    pulled_at  TIMESTAMP NOT NULL,
+    status     VARCHAR NOT NULL,      -- running | success | error
+    note       VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS nba_player_seasons (
+    pull_id         BIGINT NOT NULL,
+    season          VARCHAR NOT NULL,
+    player_id       BIGINT,
+    player_name     VARCHAR,
+    player_name_key VARCHAR,
+    player_key      VARCHAR,
+    team_abbr       VARCHAR,
+    team_count      INTEGER,
+    age             DOUBLE,
+    gp              INTEGER,
+    minutes         DOUBLE,
+    fgm             INTEGER,
+    fga             INTEGER,
+    fg_pct          DOUBLE,
+    fg3m            INTEGER,
+    fg3a            INTEGER,
+    fg3_pct         DOUBLE,
+    ftm             INTEGER,
+    fta             INTEGER,
+    ft_pct          DOUBLE,
+    oreb            INTEGER,
+    dreb            INTEGER,
+    reb             INTEGER,
+    ast             INTEGER,
+    stl             INTEGER,
+    blk             INTEGER,
+    tov             INTEGER,
+    pf              INTEGER,
+    pts             INTEGER,
+    dd2             INTEGER,
+    td3             INTEGER,
+    fantasy_pts     DOUBLE
+);
+
+CREATE OR REPLACE VIEW latest_nba_season_pull AS
+SELECT season, max(pull_id) AS pull_id
+FROM nba_season_pulls
+WHERE status = 'success'
+GROUP BY season;
+
+CREATE OR REPLACE VIEW v_nba_player_seasons AS
+SELECT s.* FROM nba_player_seasons s JOIN latest_nba_season_pull p USING (season, pull_id);
+
+-- The read-side shape: the seasons of the players in the current league
+-- snapshot, as per-game rates, with `tpm` named as the league scores it.
+-- Totals stay in v_nba_player_seasons for anything that needs them; a player
+-- nba.com has but Yahoo does not simply does not appear here.
+CREATE OR REPLACE VIEW v_player_history AS
+SELECT
+    p.player_key,
+    p.full_name,
+    p.editorial_team_abbr        AS yahoo_team,
+    s.season,
+    s.team_abbr                  AS nba_team,
+    s.team_count,
+    s.age,
+    s.gp,
+    round(s.minutes / nullif(s.gp, 0), 1) AS mpg,
+    round(s.pts     / nullif(s.gp, 0), 2) AS pts,
+    round(s.reb     / nullif(s.gp, 0), 2) AS reb,
+    round(s.ast     / nullif(s.gp, 0), 2) AS ast,
+    round(s.stl     / nullif(s.gp, 0), 2) AS stl,
+    round(s.blk     / nullif(s.gp, 0), 2) AS blk,
+    round(s.fg3m    / nullif(s.gp, 0), 2) AS tpm,
+    round(s.tov     / nullif(s.gp, 0), 2) AS tov,
+    s.fg_pct,
+    s.ft_pct,
+    s.fgm, s.fga, s.ftm, s.fta
+FROM v_nba_player_seasons s
+JOIN v_players p USING (player_key);
+
 -- --- Documentation ---
 --
 -- The same facts as the comments above, in the catalogue instead of the file, so
@@ -595,3 +691,60 @@ COMMENT ON VIEW latest_composite_run IS 'The newest successful composite run_id 
 COMMENT ON VIEW v_composite_rankings IS
     'composite_rankings from the newest successful run of each kind. What '
     '`fantasy rankings composite show` reads.';
+
+-- NBA player seasons
+
+COMMENT ON TABLE nba_season_pulls IS
+    'One row per stats.nba.com player-totals scrape. The fourth independent '
+    'pull sequence, keyed by NBA season rather than by league — one row per '
+    'season fetched, so a run covering four seasons opens four of them.';
+COMMENT ON COLUMN nba_season_pulls.season IS 'NBA season string, e.g. ''2025-26''.';
+COMMENT ON COLUMN nba_season_pulls.status IS
+    'running | success | error. Only success reaches v_nba_player_seasons, and '
+    'each season resolves independently, so one failed season leaves the '
+    'others'' history intact.';
+
+COMMENT ON TABLE nba_player_seasons IS
+    'Season totals for every player who appeared, one row per (player, '
+    'season). Wide rather than long like player_stats: nba.com''s columns are '
+    'fixed by the endpoint, not by a league''s scoring settings, so there is '
+    'nothing for a long format to protect against. This is the only place '
+    'several seasons of the same player exist — a Yahoo snapshot holds one.';
+COMMENT ON COLUMN nba_player_seasons.player_id IS
+    'nba.com''s own player id, stable across seasons. Not Yahoo''s player_id, '
+    'which is league-scoped and unrelated.';
+COMMENT ON COLUMN nba_player_seasons.player_name IS 'nba.com''s spelling, accents and all, unmodified.';
+COMMENT ON COLUMN nba_player_seasons.player_name_key IS
+    'names.normalize(player_name) — the exact string the Yahoo match was '
+    'attempted on, stored so a miss can be debugged in SQL.';
+COMMENT ON COLUMN nba_player_seasons.player_key IS
+    'The matched players.player_key from the league snapshot, or NULL when '
+    'nothing matched. Kept rather than dropped, as in player_rankings: a NULL '
+    'here is usually a player Yahoo has no row for (retired, or out all '
+    'season), and occasionally evidence about normalize().';
+COMMENT ON COLUMN nba_player_seasons.team_abbr IS
+    'NBA tricode. For a player traded mid-season this is the last team only, '
+    'while the totals cover every team he played for — see team_count.';
+COMMENT ON COLUMN nba_player_seasons.team_count IS
+    'How many teams the row''s totals span. 1 for most players; 2+ means a '
+    'mid-season trade and a team_abbr that tells you where he ended up, not '
+    'where the numbers came from.';
+COMMENT ON COLUMN nba_player_seasons.age IS 'Age during that season, as nba.com reports it.';
+COMMENT ON COLUMN nba_player_seasons.minutes IS
+    'Total minutes for the season, not per game. Named `minutes` because '
+    '`min` would shadow the SQL function.';
+COMMENT ON COLUMN nba_player_seasons.tov IS 'Turnovers. nba.com''s own spelling, kept because `to` is a reserved word.';
+COMMENT ON COLUMN nba_player_seasons.fg3m IS 'Three-pointers made — the league''s 3PTM category, as a season total.';
+COMMENT ON COLUMN nba_player_seasons.fantasy_pts IS
+    'nba.com''s own fantasy scoring, not this league''s. Present because it is '
+    'in the payload; nothing in the model reads it.';
+
+COMMENT ON VIEW latest_nba_season_pull IS 'The newest successful player-totals pull_id per season.';
+COMMENT ON VIEW v_nba_player_seasons IS
+    'nba_player_seasons, newest successful pull per season. Season totals for '
+    'everyone nba.com has, matched or not.';
+COMMENT ON VIEW v_player_history IS
+    'The per-game read of v_nba_player_seasons, restricted to players in the '
+    'current league snapshot and joined to their Yahoo row. Several seasons '
+    'per player, which is what a trend, a durability read or an age curve '
+    'needs and what the snapshot alone cannot answer.';

@@ -4,6 +4,7 @@ Read-side queries over the latest DuckDB snapshot.
 Every function takes an open connection and returns plain dicts, so the HTTP
 layer is a thin shell around this module and the same calls work from a REPL.
 """
+from .names import normalize
 
 COUNTING = ["pts", "reb", "ast", "stl", "blk", "tpm", "tov"]
 RATES = ["fg", "ft"]
@@ -35,6 +36,26 @@ def beats(a, b, cat: dict):
     win masks and this module's team-vs-team edges can share it.
     """
     return (a < b) if cat.get("neg") else (a > b)
+
+
+def player_keys_by_name(con) -> dict[str, str]:
+    """
+    normalized full_name -> player_key, from the latest league snapshot.
+
+    The join every outside source goes through — a ranking site, nba.com — so
+    that all of them resolve a name the same way. Returns an empty map rather
+    than raising when there is no snapshot yet: an outside pull is still worth
+    storing unmatched, and dropping its rows would hide the miss.
+    """
+    try:
+        rows = con.execute("SELECT full_name, player_key FROM v_players").fetchall()
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for full_name, player_key in rows:
+        if full_name and player_key:
+            out.setdefault(normalize(full_name), player_key)
+    return out
 
 
 def latest_pull(con) -> dict:

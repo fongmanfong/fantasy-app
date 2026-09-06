@@ -518,8 +518,14 @@ Roughly in order of how much they cost:
    fill. It is a shortlist, not a valuation.
 7. **No FAAB, waiver priority, or trade logic.** A recommended add is assumed
    to be obtainable.
-8. **Only the latest pull is read.** The `v_*` views resolve to the newest
-   snapshot; accumulated history is not used to estimate anything.
+8. **Only the latest pull is read, and only the current season.** The `v_*`
+   views resolve to the newest snapshot; accumulated history is not used to
+   estimate anything. `fantasy history pull` now stores four seasons of NBA
+   totals per player in `nba_player_seasons`, but **nothing in `analysis/`
+   reads it** — every rate, variance and availability figure below still comes
+   from the single Yahoo snapshot. Prior seasons are context for a reader, not
+   a model input; using them to shrink a small-sample rate toward a player's
+   own career is an obvious next step and has not been done.
 
 ---
 

@@ -13,10 +13,11 @@ cannot do. This file is the part that is not obvious from the code.
 **Use the venv.** `.venv/bin/python`, `.venv/bin/fantasy`. There is no global install.
 
 **DuckDB takes an exclusive lock on the file.** Only one writer at a time. The
-writers are `pull`, `rankings pull` and `schedule pull`; two of them cannot run
-concurrently, and an open `duckdb` shell blocks any of them. Everything else —
-`sql`, `tables`, `pulls`, `rules`, `matchup`, `waivers`, `report`, `view`,
-`rankings show`, `schedule show` — opens the file read-only and *can* share it.
+writers are `pull`, `rankings pull`, `schedule pull` and `history pull`; two of
+them cannot run concurrently, and an open `duckdb` shell — or a running
+`fantasy view` — blocks any of them. Everything else — `sql`, `tables`,
+`pulls`, `rules`, `matchup`, `waivers`, `report`, `view`, `rankings show`,
+`schedule show`, `history show` — opens the file read-only and *can* share it.
 Do not fan analysis out across parallel shells expecting them to interleave —
 run them in sequence.
 
@@ -38,7 +39,8 @@ Four things about it will mislead you if you do not know them:
    pulled, so Yahoo returned full-season figures for `last_7`, `last_14` and
    `last_30` alike. The recency blend in `projection.py` is real code but a
    no-op on this data. Do not "discover" that recency weighting has no effect
-   and conclude it is broken.
+   and conclude it is broken. For any question about a player's trajectory, use
+   `v_player_history` instead — four seasons off nba.com, pulled separately.
 2. **The free-agent pool is truncated.** It was pulled with `--fa-limit`, so
    there are 25 free agents, of which 16 clear the model's games filter.
    `fantasy waivers` is therefore searching a fraction of the real pool. Say so
@@ -90,11 +92,11 @@ The rest of the CLI answers narrower questions:
 
 Teams resolve loosely — team key, team id (`8`), or part of a name or manager.
 
-## The two outside sources
+## The three outside sources
 
-Besides the Yahoo league, the store pulls in two things on their own cadence.
-Each has its own pull sequence and its own orchestrator, and neither is stamped
-with a league key, because neither is specific to one league.
+Besides the Yahoo league, the store pulls in three things on their own cadence.
+Each has its own pull sequence and its own orchestrator, and none is stamped
+with a league key, because none is specific to one league.
 
 ```sh
 .venv/bin/fantasy rankings sources           # what this app knows how to scrape
@@ -104,6 +106,8 @@ with a league key, because neither is specific to one league.
 .venv/bin/fantasy rankings composite show --team me
 .venv/bin/fantasy schedule pull              # season inferred from today's date
 .venv/bin/fantasy schedule show --team BOS
+.venv/bin/fantasy history pull               # only the seasons not yet stored
+.venv/bin/fantasy history show "Trae Young"
 ```
 
 - **Rankings** (`sources/rankings/`) are a registry: each site is one module
@@ -136,6 +140,22 @@ with a league key, because neither is specific to one league.
 - **The schedule** (`sources/schedule/`) is stats.nba.com via `nba_api`, and it
   is what `projection.team_schedule` fits per-team games-per-week from. Without
   it the model falls back to a flat 3.5 and says so in `fantasy rules`.
+- **Player history** (`sources/history/`) is stats.nba.com's
+  `LeagueDashPlayerStats`, season totals for everyone who appeared, one pull row
+  per season. It exists because **the snapshot has one season and four identical
+  stat windows** — nothing else in the store can say whether a player is
+  climbing, declining or durable. One request per season, not per player: the
+  endpoint returns ~570 rows at once. Totals are stored, not per-game figures;
+  `v_player_history` divides by `gp` and restricts to players in the snapshot.
+  Seasons resolve independently, so one throttled season does not cost the rest.
+  **A stored season is skipped** — `history.should_pull` — because a finished
+  season's totals are final; the two exceptions are the season in progress,
+  whose totals are still accumulating, and `--refresh`. Reach for `--refresh`
+  after a fresh `fantasy pull`: `player_key` is resolved at insert time, so
+  seasons stored against an older snapshot keep the matches they made then.
+  **Nothing in `analysis/` reads it yet** — `projection.py` still builds off the
+  Yahoo snapshot alone, so this is context for a human or an agent, not a model
+  input.
 
 **Names are the join.** An outside source prints "Nikola Jokic" where Yahoo has
 "Nikola Jokić", so both sides go through `names.normalize()` — case, accents,
@@ -144,6 +164,9 @@ never the surname. A ranking row that still doesn't match is **stored with a
 null `player_key` rather than dropped**: an unmatched name is a signal about
 `normalize()`, and throwing it away would hide the miss. `fantasy rankings show`
 prints those as `unmatched`.
+
+Every outside source resolves a name through the same map —
+`query.player_keys_by_name(con)`. Use it rather than writing the join again.
 
 The same normalisation exists twice — once in `names.py` and once as the
 `name_key()` SQL macro in `schema.sql`, used by the `player_name_key` column.
@@ -165,6 +188,14 @@ with db.connect(read_only=True) as con:
     waiver.add_drop(con, opponent="Starboy", sims=8000)
     projection.build(con)                             # per-player rates, before simulation
     composite.load(con)                               # the stored composite ranking
+```
+
+Past seasons have no analysis module of their own yet — read `v_player_history`
+directly, one row per (player, season), already per game:
+
+```sql
+select season, gp, mpg, pts, reb, ast, tpm, stl, blk, tov, fg_pct, ft_pct
+from v_player_history where full_name = 'Cade Cunningham' order by season;
 ```
 
 `matchup.prepare(con, ...)` returns `(players, draws, rules)` if you want to
@@ -206,10 +237,12 @@ fantasy/
 ├── rankings.py       ranking-site pull orchestration
 ├── composite.py      composite-run orchestration; the only writer that reads first
 ├── schedule.py       NBA schedule pull orchestration
+├── history.py        past-season NBA player stats pull orchestration
 ├── yahoo/            auth, client, parse (parsers pure, no I/O)
 ├── sources/          everything pulled in besides your Yahoo league
 │   ├── rankings/     a registry of interchangeable scrapers behind one SOURCES dict
-│   └── schedule/     stats.nba.com, split client.py/parse.py the same way yahoo/ is
+│   ├── schedule/     stats.nba.com, split client.py/parse.py the same way yahoo/ is
+│   └── history/      stats.nba.com again, past-season player totals, same split
 ├── store/            db.py + schema.sql
 └── analysis/
     ├── rules.py      league rules from the snapshot; runs first, refuses what it can't model
@@ -228,10 +261,12 @@ CLI** — if you find yourself computing something there that a caller other tha
 the terminal would want, it belongs in `query.py` or `analysis/`.
 
 - **The store is append-only.** Nothing is ever UPDATEd or DELETEd except a
-  pull row's own status. There are now **three independent pull sequences** —
-  `pulls` (the league), `ranking_pulls`, `nba_schedule_pulls` — and each family
-  of `v_*` views resolves to the newest successful pull *of its own kind*, so a
-  stale schedule and a fresh league snapshot coexist happily. Keep it that way;
+  pull row's own status. There are now **four independent pull sequences** —
+  `pulls` (the league), `ranking_pulls`, `nba_schedule_pulls`,
+  `nba_season_pulls` — and each family of `v_*` views resolves to the newest
+  successful pull *of its own kind*, so a stale schedule and a fresh league
+  snapshot coexist happily. `nba_season_pulls` opens one row **per season**, so
+  a four-season run is four pulls that succeed or fail on their own. Keep it that way;
   accumulated history is the basis for several planned improvements.
   `composite_runs` is **not** a fourth pull sequence — nothing there comes off
   the wire — but it is stamped and resolved the same way, and `composite build`
@@ -276,14 +311,14 @@ the terminal would want, it belongs in `query.py` or `analysis/`.
   exit non-zero on failure. No network and no database *file* — `rules.py` and
   the report are tested against in-memory DuckDB fixtures.
   ```sh
-  .venv/bin/python tests/run_all.py          # all nine, one line each
+  .venv/bin/python tests/run_all.py          # all ten, one line each
   .venv/bin/python tests/test_analysis.py    # or any one on its own
   ```
-  The nine are `test_parse`, `test_analysis`, `test_report`, `test_names`,
+  The ten are `test_parse`, `test_analysis`, `test_report`, `test_names`,
   `test_rankings`, `test_dynatyze`, `test_angle`, `test_schedule`,
-  `test_composite`. The last one is the exception to "no database": it builds
-  the real `schema.sql` in an in-memory DuckDB, because half of what it is
-  checking is the round trip through the store.
+  `test_history`, `test_composite`. `test_composite` is the exception to "no
+  database": it builds the real `schema.sql` in an in-memory DuckDB, because
+  half of what it is checking is the round trip through the store.
 - **Comments explain why, not what.** Docstrings are prose, not parameter lists.
   Match the surrounding density rather than annotating every line.
 - **Calibration constants carry their reasoning** in a comment above them

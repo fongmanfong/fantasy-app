@@ -77,6 +77,8 @@ fantasy report                       # one standing report, for you or an agent
 | `fantasy rankings composite show` | Show the stored composite ranking. |
 | `fantasy schedule pull [SEASON]` | Fetch the NBA game schedule and append it to the database. |
 | `fantasy schedule show` | Show the latest pulled schedule, optionally filtered by team. |
+| `fantasy history pull [SEASONS]` | Fetch the seasons not already stored and append them. |
+| `fantasy history show [PLAYER]` | Show stored season stats per game, or what is stored. |
 
 `pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
 `--fa-limit N` (cap the free-agent pool; default is the whole pool).
@@ -249,6 +251,64 @@ WHERE game_date BETWEEN '2026-11-02' AND '2026-11-08'
 GROUP BY 1 ORDER BY 2 DESC;
 ```
 
+## Player history
+
+A Yahoo snapshot holds one season, and once that season is over its four stat
+windows collapse to identical full-season figures — so the store on its own
+cannot say whether a player is climbing, declining, or has ever been durable.
+`fantasy history` closes that gap: stats.nba.com's `LeagueDashPlayerStats`
+(again via nba_api), season totals for every player who appeared, one pull per
+season.
+
+```sh
+fantasy history pull                     # the 4 most recent played seasons
+fantasy history pull -n 6                # or six of them
+fantasy history pull 2019-20 2020-21     # or name them
+fantasy history pull --refresh           # re-fetch even what is already stored
+fantasy history show "Trae Young"        # per-game lines, one row per season
+fantasy history show                     # what is stored, per season
+```
+
+**A season already stored is skipped.** A finished season's totals are final,
+so there is nothing to gain by fetching it twice: miss a year and the next run
+costs a request only for the years you missed. Two exceptions. The **season in
+progress** is always re-fetched, because its totals are still accumulating and
+a stored copy is a snapshot of a moving number. And `--refresh` overrides the
+skip entirely — which is also how you re-match old seasons against a newer
+league snapshot, since `player_key` is resolved at insert time and a season
+stored before a `fantasy pull` still carries the matches it made then.
+
+A refresh **appends**, like every other pull here; it does not overwrite. The
+older rows stay in `nba_player_seasons` and `v_nba_player_seasons` resolves to
+the newest successful pull for that season.
+
+It is one request per season rather than one per player — the endpoint returns
+the whole league at once, ~570 rows — so four seasons is four requests. Totals
+are stored rather than per-game figures: per-game is a division by `gp` that
+loses nothing, while nba.com's own PerGame mode rounds. `v_player_history` does
+that division for you.
+
+Rows are joined to the snapshot by name through the same `names.normalize()`
+every outside source goes through, and an unmatched row is **stored with a null
+`player_key` rather than dropped**. Most nulls are simply players Yahoo has no
+row for; the reverse — a rostered player missing from a season — is the
+interesting direction, and it means he did not play that year rather than that
+the match failed.
+
+Seasons resolve independently, so a season that fails (stats.nba.com throttles)
+leaves the others intact and is worth re-running on its own.
+
+```sql
+-- Four-season trend for one player, per game
+SELECT season, nba_team, gp, mpg, pts, reb, ast, tpm, stl, blk, tov, fg_pct, ft_pct
+FROM v_player_history WHERE full_name = 'Cade Cunningham' ORDER BY season;
+
+-- Who is trending up: last season's points per game against three years ago
+SELECT full_name,
+       max(pts) FILTER (season = '2025-26') - max(pts) FILTER (season = '2022-23') AS delta
+FROM v_player_history GROUP BY 1 HAVING count(*) = 4 ORDER BY delta DESC LIMIT 10;
+```
+
 ## Schema
 
 Snapshot tables — every row carries `pull_id` and `league_key`:
@@ -302,6 +362,17 @@ NBA schedule tables, on their own pull sequence (keyed by `season`, not `league_
 `v_nba_schedule` resolves to the latest successful pull per season; `v_nba_team_schedule`
 unpivots it to one row per (team, game) — the join surface for counting a team's games in
 a date range.
+
+NBA player-season tables, on their own pull sequence (also keyed by `season`):
+
+| Table | Contents |
+|---|---|
+| `nba_season_pulls` | One row per season fetched by `fantasy history pull`: season, timestamp, status. |
+| `nba_player_seasons` | One row per (player, season): season totals, age, games, `player_key` if matched. Wide, not long like `player_stats` — nba.com's columns are fixed by the endpoint rather than by a league's settings. |
+
+`v_nba_player_seasons` resolves to the latest successful pull per season;
+`v_player_history` divides those totals by games and restricts them to the players in
+the current league snapshot.
 
 ## Analysis
 
@@ -479,6 +550,7 @@ fantasy/
 ├── rankings.py       # scrape a ranking site, match players, append to DuckDB
 ├── report.py         # composes the whole picture into one markdown document
 ├── schedule.py       # fetch the NBA game schedule, append to DuckDB
+├── history.py        # fetch past-season NBA player stats, append to DuckDB
 ├── server.py         # local JSON API + app host
 ├── analysis/
 │   ├── rules.py      # league rules read from the snapshot; refuses what it can't model
@@ -494,8 +566,11 @@ fantasy/
 │   │   ├── dynatyze.py          # pure JSON-LD → rows parser
 │   │   └── angle.py             # Google Sheet CSV → rows, plus the URL rewriting
 │   │                            # that finds the sheet behind a rankings post
-│   └── schedule/
-│       ├── client.py # fetch the schedule from stats.nba.com (via nba_api)
+│   ├── schedule/
+│   │   ├── client.py # fetch the schedule from stats.nba.com (via nba_api)
+│   │   └── parse.py  # raw payload → flat rows (pure functions)
+│   └── history/
+│       ├── client.py # fetch past-season player totals from stats.nba.com
 │       └── parse.py  # raw payload → flat rows (pure functions)
 ├── templates/
 │   └── app.html      # the interface
@@ -519,7 +594,8 @@ document, `tests/test_names.py` the name standardizer, `tests/test_rankings.py`,
 `tests/test_dynatyze.py` and `tests/test_angle.py` each ranking source against a
 saved fixture of what that site really serves (plus, for Angle, the sheet-URL
 rewriting), `tests/test_schedule.py` the schedule parser against a ScheduleLeagueV2-shaped
-fixture, and `tests/test_composite.py` the composite's folding rules and its round
+fixture, `tests/test_history.py` the player-totals parser and which seasons a run
+asks for, and `tests/test_composite.py` the composite's folding rules and its round
 trip through the store. None touches the network; only the last touches a
 database, and that one is in-memory:
 
