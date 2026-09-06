@@ -415,6 +415,12 @@ limitations worth knowing before you trust a number — and a prioritised list o
 what would make the simulation better, led by matching the real schedule to
 the specific fantasy week and backtesting against real weekly results.
 
+**[docs/LEAGUES.md](docs/LEAGUES.md)** is the other half: the settings Yahoo does
+not return, written down by hand. Lineup lock, acquisition limits, keeper rules
+and playoff shape are all things `fantasy rules` has to assume — that file is
+where the real answers go, one block per league, with `?` marking what is still
+unknown so it reads as a gap rather than a default.
+
 ### From Python
 
 Each entry point takes an open connection and returns plain dicts:
@@ -502,7 +508,8 @@ fantasy/
     └── schema.sql    # tables + views
 
 docs/
-└── ALGORITHMS.md     # the model, its calibration, and its limits
+├── ALGORITHMS.md     # the model, its calibration, and its limits
+└── LEAGUES.md        # each league's real settings, written down by hand
 ```
 
 `tests/test_parse.py` exercises the parsers against Yahoo-shaped fixtures,

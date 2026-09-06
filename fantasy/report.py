@@ -255,7 +255,8 @@ def _data_quality(meta: dict, cal: dict, pull_age_days: float,
             "message": "League settings are mostly NULL apart from "
                        "playoff_start_week.",
             "implication": "Playoff team count, waiver type and FAAB are unknown, "
-                           "so an add is assumed free.",
+                           "so an add is assumed free. docs/LEAGUES.md is where "
+                           "those are recorded by hand.",
         })
 
     out.append({
