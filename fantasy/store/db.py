@@ -31,7 +31,8 @@ def connect(read_only: bool = False):
 
     `read_only=True` is what lets several commands — and a `duckdb` shell —
     share the file; a writable connection takes an exclusive lock, so only one
-    `pull`, `rankings pull` or `schedule pull` can run at a time. Raises
+    `pull`, `rankings pull`, `schedule pull` or `history pull` can run at a
+    time. Raises
     :class:`NoDatabase` rather than an opaque IO error when a read-only caller
     runs before the first pull.
     """
@@ -71,7 +72,7 @@ def new_pull(con, league_key: str) -> int:
 
 def _complete(con, table: str, pk_col: str, pk: int,
               status: str, note: str | None) -> None:
-    """Close out a pull row. The three sequences differ only in table and key."""
+    """Close out a pull row. The four sequences differ only in table and key."""
     con.execute(
         f"UPDATE {table} SET status = ?, note = ? WHERE {pk_col} = ?",
         [status, note, pk],
@@ -147,11 +148,35 @@ def insert_schedule_rows(con, rows: list[dict], pull_id: int, season: str) -> in
     return _insert(con, "nba_schedule", rows, {"pull_id": pull_id, "season": season})
 
 
+def new_season_pull(con, season: str) -> int:
+    """Open an NBA player-totals pull and return its id. See `new_pull`."""
+    pull_id = con.execute("SELECT nextval('nba_season_pull_id_seq')").fetchone()[0]
+    con.execute(
+        "INSERT INTO nba_season_pulls (pull_id, season, pulled_at, status) "
+        "VALUES (?, ?, ?, 'running')",
+        [pull_id, season, datetime.now(timezone.utc)],
+    )
+    return pull_id
+
+
+def complete_season_pull(con, pull_id: int, status: str, note: str | None = None) -> None:
+    """Mark an NBA player-totals pull finished. Needs a writable connection."""
+    _complete(con, "nba_season_pulls", "pull_id", pull_id, status, note)
+
+
+def insert_player_season_rows(con, rows: list[dict], pull_id: int, season: str) -> int:
+    """
+    Append one season of NBA player totals, stamping pull_id and season — the
+    parser never sees which season it parsed. Writable connection.
+    """
+    return _insert(con, "nba_player_seasons", rows, {"pull_id": pull_id, "season": season})
+
+
 def new_composite_run(con, kind: str, sources: dict, params: dict) -> int:
     """
     Open a composite run and return its id. See `new_pull`.
 
-    Unlike the three pull sequences this fetches nothing — but it is stamped and
+    Unlike the four pull sequences this fetches nothing — but it is stamped and
     closed the same way, because what makes an old ordering readable is knowing
     which ranking pulls and which parameters produced it.
     """

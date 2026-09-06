@@ -9,8 +9,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import (composite as composite_mod, config, pull as pull_mod,
-               rankings as rankings_mod, report as report_mod,
+from . import (composite as composite_mod, config, history as history_mod,
+               pull as pull_mod, rankings as rankings_mod, report as report_mod,
                schedule as schedule_mod, server as server_mod)
 from .analysis import (composite as composite_model, matchup as matchup_mod,
                        rules as rules_mod, waiver as waiver_mod)
@@ -31,6 +31,9 @@ composite_app = typer.Typer(help="Fold every ranking source into one ordering.",
 rankings_app.add_typer(composite_app, name="composite")
 schedule_app = typer.Typer(help="Pull the NBA game schedule into DuckDB.", no_args_is_help=True)
 app.add_typer(schedule_app, name="schedule")
+history_app = typer.Typer(help="Pull past-season NBA player stats into DuckDB.",
+                          no_args_is_help=True)
+app.add_typer(history_app, name="history")
 
 console = Console()
 err = Console(stderr=True)
@@ -822,6 +825,97 @@ def schedule_show_cmd(
         ["date", "home", "away", "label"],
         title=f"{season} schedule" + (f" — {team.upper()}" if team else ""),
     )
+    _truncated(shown, rows)
+
+
+# --- history -----------------------------------------------------------------
+
+@history_app.command("pull")
+def history_pull_cmd(
+    seasons: list[str] = typer.Argument(None, help="NBA seasons, e.g. '2024-25 2025-26'. "
+                                        "Default: the most recent played seasons."),
+    count: int = typer.Option(4, "--count", "-n", help="How many recent seasons, "
+                              "when none are named."),
+    refresh: bool = typer.Option(False, "--refresh", help="Re-fetch seasons that "
+                                 "are already stored, instead of skipping them."),
+):
+    """Fetch past-season NBA player stats and append them to the database."""
+    try:
+        with console.status("[cyan]fetching player stats[/cyan]") as status:
+            result = history_mod.run(
+                list(seasons) if seasons else None, count=count, refresh=refresh,
+                on_step=lambda msg: status.update(f"[cyan]{msg}[/cyan]"))
+    except Exception as exc:
+        fail(str(exc))
+
+    def note(s):
+        if s.skipped:
+            return "skipped — already stored"
+        return s.error or ""
+
+    render(
+        [(s.season, f"#{s.pull_id}" if s.pull_id else "-",
+          s.players or "-", s.matched or "-", note(s)) for s in result.seasons],
+        ["season", "pull", "players", "matched", "note"],
+        title="Player stats",
+    )
+    if result.skipped and not result.fetched:
+        console.print("[dim]Nothing to fetch — every season asked for is stored. "
+                      "`--refresh` re-fetches them anyway.[/dim]")
+    if result.failed:
+        # A failed season is a recorded pull like any other, so the rest of the
+        # run stands; naming it is what tells you a re-run is worth it.
+        fail(f"{len(result.failed)} of {len(result.fetched)} fetched seasons failed: "
+             + ", ".join(s.season for s in result.failed))
+
+
+@history_app.command("show")
+def history_show_cmd(
+    player: str = typer.Argument(None, help="Part of a player name. "
+                                 "Omit for a summary of what is stored."),
+    limit: int = typer.Option(40, "--limit", help="Rows to show. 0 for all."),
+):
+    """Show stored NBA season stats, per game, for players in the league snapshot."""
+    with read_only() as con:
+        if not player:
+            rows = con.execute(
+                "SELECT s.season, count(*) AS players, "
+                "       count(s.player_key) AS matched, "
+                "       max(p.pulled_at)::DATE AS pulled "
+                "FROM v_nba_player_seasons s "
+                "JOIN nba_season_pulls p USING (pull_id) "
+                "GROUP BY s.season ORDER BY s.season"
+            ).fetchall()
+            if not rows:
+                console.print("[yellow]No NBA season stats stored yet.[/yellow] "
+                              "Run `fantasy history pull`.")
+                return
+            render(rows, ["season", "players", "matched", "pulled"],
+                   title="NBA player seasons stored")
+            console.print("[dim]matched = joined to a player in the league snapshot; "
+                          "`history show <name>` for one player.[/dim]")
+            return
+
+        rows = con.execute(
+            "SELECT full_name, season, nba_team, age, gp, mpg, pts, reb, ast, "
+            "       tpm, stl, blk, tov, fg_pct, ft_pct "
+            "FROM v_player_history "
+            "WHERE name_key(full_name) LIKE '%' || name_key(?) || '%' "
+            "ORDER BY full_name, season",
+            [player],
+        ).fetchall()
+
+    if not rows:
+        console.print(f"[yellow]No stored seasons match {player!r}.[/yellow] "
+                      "Only players in the league snapshot appear here — "
+                      "run `fantasy history pull` if nothing is stored yet.")
+        return
+
+    shown = rows if limit == 0 else rows[:limit]
+    render(shown,
+           ["player", "season", "team", "age", "gp", "mpg", "pts", "reb", "ast",
+            "3pm", "stl", "blk", "to", "fg%", "ft%"],
+           title="Season stats, per game")
     _truncated(shown, rows)
 
 

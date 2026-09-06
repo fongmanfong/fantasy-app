@@ -8,6 +8,7 @@ import json
 import logging
 from dataclasses import dataclass
 
+from . import query
 from .names import normalize
 from .sources.rankings import SOURCES, fetch
 from .store import db
@@ -31,19 +32,6 @@ class RankingPullResult:
     def status(self) -> str:
         """What gets written to the pull row: a failed scrape is still a pull."""
         return "error" if self.error else "success"
-
-
-def _match_players(con) -> dict[str, str]:
-    """normalized full_name -> player_key, from the latest league snapshot."""
-    try:
-        rows = con.execute("SELECT full_name, player_key FROM v_players").fetchall()
-    except Exception:
-        return {}  # no league snapshot yet — rankings still get stored, unmatched
-    out: dict[str, str] = {}
-    for full_name, player_key in rows:
-        if full_name and player_key:
-            out.setdefault(normalize(full_name), player_key)
-    return out
 
 
 def run(source: str, url: str | None = None) -> RankingPullResult:
@@ -95,7 +83,7 @@ def run(source: str, url: str | None = None) -> RankingPullResult:
             db.complete_ranking_pull(con, ranking_pull_id, result.status, result.error)
             return result
 
-        by_name = _match_players(con)
+        by_name = query.player_keys_by_name(con)
 
         payload = []
         for row in rows:
