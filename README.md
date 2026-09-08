@@ -75,6 +75,8 @@ fantasy report                       # one standing report, for you or an agent
 | `fantasy rankings show SOURCE` | Show the latest pull for a ranking source; `--notes` for its written commentary. |
 | `fantasy rankings composite build` | Fold every ranking source into one ordering and store it. |
 | `fantasy rankings composite show` | Show the stored composite ranking. |
+| `fantasy rankings redraft load` | Reload the pasted Yahoo redraft board and rebuild the reconciliation view. |
+| `fantasy rankings redraft show` | The redraft board next to the dynasty composite; `--team`, `--gap`, `--trios`. |
 | `fantasy schedule pull [SEASON]` | Fetch the NBA game schedule and append it to the database. |
 | `fantasy schedule show` | Show the latest pulled schedule, optionally filtered by team. |
 | `fantasy history pull [SEASONS]` | Fetch the seasons not already stored and append them. |
@@ -241,6 +243,39 @@ WHERE r.source = 'hashtag_dynasty'
 ORDER BY r.rank
 LIMIT 20;
 ```
+
+### The redraft board
+
+The season draft goes by Yahoo's own redraft ranking, not by dynasty value, so
+the two are worth reading side by side. `fantasy rankings redraft load` writes a
+hand-pasted copy of Yahoo's draft-analysis page (it is login-walled and renders
+client-side, so there is no scrape) into `redraft_ranks` and rebuilds
+`v_redraft_vs_dynasty`, which joins it to the composite. Refreshing the board
+means editing the `BOARD` constant in `fantasy/redraft.py` and re-running `load`.
+It is not a pull — no history, no league key — and a fresh database has no board
+until the command runs.
+
+```sh
+fantasy rankings redraft load                 # after editing BOARD
+fantasy rankings redraft show                 # top 40 by blended rank
+fantasy rankings redraft show --team me       # ...restricted to your roster
+fantasy rankings redraft show --gap 20        # only where the two boards disagree by 20+
+fantasy rankings redraft show --trios         # each team's top-3 keeper trio, ranked
+```
+
+```
+ player               rd  dyn  blend  adp   gap  age   owner
+ Cooper Flagg         13  5    9.0    11.1  +8   19.7   Dame of …
+ Tyrese Haliburton    12  13   12.5   25.3  -1   26.5   Herrick'…
+ Cameron Boozer       65  11   38.0   62.7  +54  19.1  -
+```
+
+`rd` is Yahoo's Rank column (its projection); `adp` is the average pick the
+room actually spends on him — the two split where the market prices in an injury
+the projection ignores. `gap` is `rd − dyn`: positive means the dynasty sources
+rate him above the draft room (a buy-low), negative the reverse (a sell-high).
+`fantasy view` shows the same reconciliation as its **Keepers** tab, with a
+scatter and the trio ranking.
 
 ## NBA schedule
 

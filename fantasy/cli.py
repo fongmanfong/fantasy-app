@@ -10,7 +10,8 @@ from rich.console import Console
 from rich.table import Table
 
 from . import (composite as composite_mod, config, history as history_mod,
-               pull as pull_mod, rankings as rankings_mod, report as report_mod,
+               pull as pull_mod, query, rankings as rankings_mod,
+               redraft as redraft_mod, report as report_mod,
                schedule as schedule_mod, server as server_mod)
 from .analysis import (composite as composite_model, matchup as matchup_mod,
                        rules as rules_mod, waiver as waiver_mod)
@@ -29,6 +30,9 @@ app.add_typer(rankings_app, name="rankings")
 composite_app = typer.Typer(help="Fold every ranking source into one ordering.",
                            no_args_is_help=True)
 rankings_app.add_typer(composite_app, name="composite")
+redraft_app = typer.Typer(help="Yahoo's redraft board, reconciled with the dynasty "
+                               "composite.", no_args_is_help=True)
+rankings_app.add_typer(redraft_app, name="redraft")
 schedule_app = typer.Typer(help="Pull the NBA game schedule into DuckDB.", no_args_is_help=True)
 app.add_typer(schedule_app, name="schedule")
 history_app = typer.Typer(help="Pull past-season NBA player stats into DuckDB.",
@@ -804,6 +808,90 @@ def _owner_cell(owner: tuple[str, bool] | None) -> str:
         return "-"
     name, mine = owner
     return ("*" if mine else " ") + _clip(name, 9)
+
+
+# --- rankings redraft -----------------------------------------------------
+
+@redraft_app.command("load")
+def redraft_load_cmd():
+    """
+    Reload the pasted Yahoo redraft board and rebuild `v_redraft_vs_dynasty`.
+
+    The board is a constant in `fantasy/redraft.py`, not a scrape — refreshing
+    it means editing that and running this. The only writer outside the four
+    pull sequences.
+    """
+    try:
+        out = redraft_mod.run()
+    except Exception as exc:
+        fail(str(exc))
+
+    console.print(f"[green]loaded {out['loaded']} rows[/green] — "
+                  f"{out['matched']} matched to the dynasty composite")
+    if out["unmatched"]:
+        console.print(f"[dim]unmatched: {', '.join(out['unmatched'])} — a "
+                      "names.normalize() gap or genuinely unranked[/dim]")
+    console.print("[dim]`fantasy rankings redraft show` to read it back.[/dim]")
+
+
+@redraft_app.command("show")
+def redraft_show_cmd(
+    team: str = typer.Option(None, "--team", help="Only players on teams matching "
+                                                  "this text; 'me' for yours."),
+    gap: int = typer.Option(None, "--gap", help="Only players the two boards "
+                                                "disagree on by at least this many "
+                                                "ranks (buy-low and sell-high)."),
+    limit: int = typer.Option(40, "--limit", help="Rows to show. 0 for all."),
+    trios: bool = typer.Option(False, "--trios", help="Show each team's keeper trio "
+                                                      "instead of the board."),
+):
+    """
+    The redraft board beside the dynasty composite, lowest blended rank first.
+
+    `rd` is Yahoo's Rank column (projected value); `adp` is where the room
+    actually drafts him; `dyn` is the composite. `gap` is rd − dyn: a positive
+    gap is a buy-low (the dynasty sources rate him higher than the draft room),
+    a negative one a sell-high.
+    """
+    with read_only() as con:
+        board = query.keeper_board(con)
+
+    if trios:
+        for i, t in enumerate(board["trios"], 1):
+            names = ", ".join(k["name"] for k in t["keepers"])
+            console.print(
+                f"{'*' if t['mine'] else ' '}[cyan]{i:>2}[/cyan] "
+                f"[bold]{_clip(t['team'], 22)}[/bold] [dim]{t['manager']}[/dim]  "
+                f"{names}  [dim]trio {t['trio_score']:.0f}[/dim]")
+        return
+
+    rows = board["players"]
+    if team:
+        w = team.strip().lower()
+        rows = [p for p in rows if p["team_name"] and
+                (p["mine"] if w == "me"
+                 else w in p["team_name"].lower()
+                 or w in (p["manager_name"] or "").lower())]
+    if gap is not None:
+        rows = [p for p in rows if abs(p["rank_gap"]) >= gap]
+
+    if not rows:
+        console.print("[yellow]No players match.[/yellow]")
+        return
+
+    shown = rows if limit == 0 else rows[:limit]
+    render(
+        [(_clip(p["player"], 20), p["redraft_rank"], p["dynasty_rank"],
+          f"{p['blended_rank']:.1f}", f"{p['avg_pick']:.1f}", f"{p['rank_gap']:+d}",
+          "-" if p["age"] is None else f"{p['age']:.1f}",
+          _owner_cell((p["team_name"], p["mine"]) if p["team_name"] else None))
+         for p in shown],
+        ["player", "rd", "dyn", "blend", "adp", "gap", "age", "owner"],
+        title="Redraft board vs dynasty composite",
+    )
+    _truncated(shown, rows)
+    console.print("[dim]gap = rd − dyn: [green]+[/green] dynasty rates him higher "
+                  "(buy-low), [red]−[/red] the draft room does (sell-high).[/dim]")
 
 
 # --- schedule ---------------------------------------------------------------

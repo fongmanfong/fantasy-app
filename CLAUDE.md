@@ -179,7 +179,38 @@ Every outside source resolves a name through the same map —
 The same normalisation exists twice — once in `names.py` and once as the
 `name_key()` SQL macro in `schema.sql`, used by the `player_name_key` column.
 **If you change one, change the other.** Nothing currently tests that they
-agree.
+agree — and they do *not* agree on first-name nicknames: `names.normalize()`
+folds `Anthony`→`tony`, `Cameron`→`cam`; the `name_key()` SQL macro does not.
+`composite_rankings.player_name_key` is written by the Python path, so anything
+joining to it (`fantasy/redraft.py` does) must key on `names.normalize()`, not
+the macro, or it silently drops Edwards / Curry / Boozer.
+
+## The Yahoo redraft board
+
+`fantasy/redraft.py` holds a hand-pasted copy of Yahoo's draft-analysis page
+(the login-walled, client-rendered one) as the `BOARD` constant.
+`fantasy rankings redraft load` (or `python -m fantasy.redraft`) writes it into
+the `redraft_ranks` table and rebuilds the `v_redraft_vs_dynasty` view, which
+full-outer-joins it to `v_composite_rankings`. It sits under `rankings` because
+it *is* a ranking — Yahoo's redraft one — read against the composite; it is
+**not an outside source**, though: no pull sequence, no league key, not
+append-only, not in `schema.sql`, so a fresh database has no board until the
+command runs and `query.keeper_board` raises with the reload command when the
+view is absent. `redraft_rank` is Yahoo's Rank column (projected value);
+`avg_pick` is ADP, kept alongside because the two diverge where the market
+prices in risk (a torn Achilles) the projection ignores.
+
+```sh
+.venv/bin/fantasy rankings redraft load                  # after editing BOARD
+.venv/bin/fantasy rankings redraft show --team me
+.venv/bin/fantasy rankings redraft show --gap 20         # buy-lows and sell-highs
+.venv/bin/fantasy rankings redraft show --trios          # the keeper-trio ranking
+```
+
+`fantasy view` also serves it as the **Keepers** tab (`/api/keepers` →
+`query.keeper_board`): the scatter, the same board, and each team's top-3
+keeper trio. Both read the view live, so a fresh `rankings composite build`
+moves the blended numbers without touching the board.
 
 For anything the CLI does not already print, **call the Python API rather than
 parsing terminal output**. Every entry point takes an open connection and
@@ -246,6 +277,7 @@ fantasy/
 ├── composite.py      composite-run orchestration; the only writer that reads first
 ├── schedule.py       NBA schedule pull orchestration
 ├── history.py        past-season NBA player stats pull orchestration
+├── redraft.py        hand-pasted Yahoo redraft board + v_redraft_vs_dynasty; `fantasy rankings redraft load` reloads it
 ├── yahoo/            auth, client, parse (parsers pure, no I/O)
 ├── sources/          everything pulled in besides your Yahoo league
 │   ├── rankings/     a registry of interchangeable scrapers behind one SOURCES dict
