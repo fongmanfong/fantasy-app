@@ -354,3 +354,95 @@ def compare(con, a: str, b: str, period: str = "season") -> dict:
                   "b": sum(1 for c in cats if c["edge"] == "b")},
         "period": period,
     }
+
+
+def keeper_board(con) -> dict:
+    """
+    The Yahoo redraft board reconciled with the composite dynasty ranking.
+
+    `players` is every row of `v_redraft_vs_dynasty` that matched both sides,
+    each stamped with the roster it sits on. `trios` is every team's three
+    keepers — its top three players by composite score — ranked by the sum,
+    with each keeper's redraft and blended rank carried through. `unmatched`
+    lists redraft names the dynasty composite has no row for.
+
+    `v_redraft_vs_dynasty` is hand-loaded (see `fantasy.redraft`), so this
+    raises with the reload command rather than an opaque SQL error when the
+    view is absent — a fresh database has no board until that module runs.
+    """
+    exists = con.execute(
+        "select count(*) from duckdb_views() where view_name = 'v_redraft_vs_dynasty'"
+    ).fetchone()[0]
+    if not exists or con.execute("select count(*) from redraft_ranks").fetchone()[0] == 0:
+        raise RuntimeError(
+            "No redraft board loaded. Run `python -m fantasy.redraft` to write "
+            "redraft_ranks and rebuild v_redraft_vs_dynasty.")
+    if con.execute("select count(*) from v_composite_rankings").fetchone()[0] == 0:
+        raise RuntimeError(
+            "No dynasty composite yet, so the redraft board has nothing to "
+            "reconcile against. Run `fantasy rankings pull <source>` for at least "
+            "one source, then `fantasy rankings composite build`.")
+
+    rows = con.execute("""
+        with roster as (
+            select r.player_key, t.name as team_name, t.manager_name,
+                   coalesce(t.is_my_team, false) as mine
+            from v_roster_players r
+            join v_teams t on t.team_key = r.team_key
+        )
+        select v.player, v.redraft_rank, v.dynasty_rank, v.blended_rank,
+               v.rank_gap, v.avg_pick, v.age, v.dynasty_score,
+               ro.team_name, ro.manager_name, coalesce(ro.mine, false) as mine
+        from v_redraft_vs_dynasty v
+        left join roster ro on ro.player_key = v.player_key
+        where v.redraft_rank is not null and v.dynasty_rank is not null
+        order by v.blended_rank, v.dynasty_rank
+    """).fetchall()
+    keys = [d[0] for d in con.description]
+    players = [dict(zip(keys, r)) for r in rows]
+    for p in players:
+        p["blended_rank"] = round(p["blended_rank"], 1)
+        p["age"] = round(p["age"], 1) if p["age"] is not None else None
+
+    unmatched = [r[0] for r in con.execute("""
+        select r.player_name
+        from redraft_ranks r
+        left join v_composite_rankings c using (player_name_key)
+        where c.player_name_key is null
+        order by r.redraft_rank
+    """).fetchall()]
+
+    # Each team's three keepers: top three by composite score. No hypothetical
+    # holds — this is the plain default, ranked by the score sum.
+    krows = con.execute("""
+        select t.team_key, t.name, t.manager_name, coalesce(t.is_my_team, false) as mine,
+               c.player_name, c.rank as dyn_rank, c.score, c.age,
+               row_number() over (partition by t.team_key order by c.rank) as slot
+        from v_roster_players r
+        join v_teams t on t.team_key = r.team_key
+        join v_composite_rankings c on c.player_key = r.player_key
+        qualify slot <= 3
+    """).fetchall()
+    by_team: dict = {}
+    for tk, name, mgr, mine, pname, dyn_rank, score, age, slot in krows:
+        t = by_team.setdefault(tk, {"team": name, "manager": mgr, "mine": mine, "keepers": []})
+        t["keepers"].append({"name": pname, "dynasty_rank": dyn_rank,
+                             "score": round(score, 1),
+                             "age": round(age, 1) if age is not None else None})
+    rd_by_name = {p["player"]: p for p in players}
+    trios = []
+    for t in by_team.values():
+        for k in t["keepers"]:
+            hit = rd_by_name.get(k["name"])
+            k["redraft_rank"] = hit["redraft_rank"] if hit else None
+            k["blended_rank"] = hit["blended_rank"] if hit else None
+        t["trio_score"] = round(sum(k["score"] for k in t["keepers"]), 1)
+        trios.append(t)
+    trios.sort(key=lambda t: -t["trio_score"])
+
+    return {
+        "players": players,
+        "trios": trios,
+        "unmatched": unmatched,
+        "counts": {"matched": len(players), "unmatched": len(unmatched)},
+    }

@@ -1,79 +1,83 @@
 <!doctype html>
-<html lang="en"><head>
+<html lang="en" data-theme="light"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fantasy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
 <style>
 :root{
-  --paper:#eff2ee; --surface:#ffffff; --surface-2:#f7f9f6;
-  --ink:#131a16; --ink-2:#3c4a43; --muted:#61706a;
-  --rule:#d5ddd6; --rule-strong:#b9c4bc;
-  --accent:#146b45; --accent-ink:#ffffff;
-  --good:#2f8f5b; --bad:#c05a3e;
-  --chip:#e4eae4; --chip-ink:#3c4a43;
-  --warn:#8a6d1f;
-  --tint-max:34%;
+  --paper:#f3f2ec; --surface:#fbfaf6; --surface-2:#eeece2;
+  --ink:#282621; --ink-2:#5b564c; --muted:#8b8578;
+  --rule:#e3dfd4; --rule-strong:#ccc7b7;
+  --accent:#bf5a38; --accent-ink:#fdfbf6;
+  --good:#4a6f96; --bad:#b0563a;
+  --chip:#eae7dc; --chip-ink:#5b564c;
+  --warn:#8a6c28;
+  --tint-max:32%;
+  --radius:10px;
+  --shadow:0 1px 2px rgba(40,38,33,.05), 0 10px 26px -16px rgba(40,38,33,.18);
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
-    --paper:#0e1411; --surface:#161e19; --surface-2:#1b241e;
-    --ink:#e7ede9; --ink-2:#b3c0b8; --muted:#8b9a92;
-    --rule:#2a352e; --rule-strong:#3a473f;
-    --accent:#3fa876; --accent-ink:#08140d;
-    --good:#3fa876; --bad:#d4735a;
-    --chip:#232d27; --chip-ink:#b3c0b8;
-    --warn:#c9a444; --tint-max:42%;
+    --paper:#262521; --surface:#302d28; --surface-2:#38352d;
+    --ink:#efece3; --ink-2:#b8b3a6; --muted:#8b8578;
+    --rule:#403c33; --rule-strong:#504b40;
+    --accent:#d97f5c; --accent-ink:#241f1b;
+    --good:#84a6cc; --bad:#d17a54;
+    --chip:#3a362e; --chip-ink:#b8b3a6;
+    --warn:#c7a259; --tint-max:40%;
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 12px 30px -18px rgba(0,0,0,.62);
   }
 }
 :root[data-theme="dark"]{
-  --paper:#0e1411; --surface:#161e19; --surface-2:#1b241e;
-  --ink:#e7ede9; --ink-2:#b3c0b8; --muted:#8b9a92;
-  --rule:#2a352e; --rule-strong:#3a473f;
-  --accent:#3fa876; --accent-ink:#08140d;
-  --good:#3fa876; --bad:#d4735a;
-  --chip:#232d27; --chip-ink:#b3c0b8;
-  --warn:#c9a444; --tint-max:42%;
+  --paper:#262521; --surface:#302d28; --surface-2:#38352d;
+  --ink:#efece3; --ink-2:#b8b3a6; --muted:#8b8578;
+  --rule:#403c33; --rule-strong:#504b40;
+  --accent:#d97f5c; --accent-ink:#241f1b;
+  --good:#84a6cc; --bad:#d17a54;
+  --chip:#3a362e; --chip-ink:#b8b3a6;
+  --warn:#c7a259; --tint-max:40%;
+  --shadow:0 1px 2px rgba(0,0,0,.35), 0 12px 30px -18px rgba(0,0,0,.62);
 }
 *{box-sizing:border-box}
 body{background:var(--paper);color:var(--ink);
-  font-family:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
-  font-size:15px;line-height:1.5;padding:26px 20px 70px}
+  font-family:"Public Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:15px;line-height:1.55;padding:32px 22px 84px}
 .wrap{max-width:1220px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
 
-.eyebrow{font-family:"Barlow Condensed",sans-serif;font-size:12.5px;font-weight:600;
+.eyebrow{font-family:"Public Sans",system-ui,sans-serif;font-size:12.5px;font-weight:600;
   letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
-h1{font-family:"Barlow Condensed",sans-serif;font-weight:700;
-  font-size:clamp(30px,4.6vw,44px);line-height:.96;margin:2px 0 0;letter-spacing:-.01em}
+h1{font-family:"Public Sans",system-ui,sans-serif;font-weight:700;
+  font-size:clamp(28px,4.2vw,40px);line-height:1.05;margin:3px 0 0;letter-spacing:-.005em}
 
 .masthead{display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px 28px;
-  padding-bottom:14px;border-bottom:2px solid var(--rule-strong)}
+  padding-bottom:16px;border-bottom:1px solid var(--rule)}
 .ident{flex:1 1 300px;min-width:0}
 .facts{display:flex;gap:24px;flex-wrap:wrap}
 .fact{display:flex;flex-direction:column}
-.fact .k{font-family:"Barlow Condensed",sans-serif;font-size:11px;font-weight:600;
+.fact .k{font-family:"Public Sans",system-ui,sans-serif;font-size:11px;font-weight:600;
   letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
 .fact .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
 .fact .v small{font-size:12.5px;font-weight:500;color:var(--muted)}
 
-nav.tabs{display:flex;gap:2px;border-bottom:1px solid var(--rule);flex-wrap:wrap}
-nav.tabs button{font-family:"Barlow Condensed",sans-serif;font-size:14px;font-weight:600;
-  letter-spacing:.1em;text-transform:uppercase;padding:9px 18px;border:0;
+nav.tabs{display:flex;gap:4px;border-bottom:1px solid var(--rule);flex-wrap:wrap}
+nav.tabs button{font-family:"Public Sans",system-ui,sans-serif;font-size:14.5px;font-weight:500;
+  letter-spacing:0;padding:9px 14px;border:0;
   background:transparent;color:var(--muted);cursor:pointer;
   border-bottom:2px solid transparent;margin-bottom:-1px}
 nav.tabs button:hover{color:var(--ink)}
-nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+nav.tabs button[aria-selected="true"]{color:var(--ink);font-weight:600;border-bottom-color:var(--accent)}
 nav.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 
 .controls{display:flex;flex-wrap:wrap;gap:14px 18px;align-items:center;
   justify-content:space-between}
 .pickers{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
-label.field{display:flex;align-items:center;gap:7px;font-family:"Barlow Condensed",sans-serif;
+label.field{display:flex;align-items:center;gap:7px;font-family:"Public Sans",system-ui,sans-serif;
   font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
-select{font-family:"Barlow",sans-serif;font-size:14px;font-weight:500;
-  padding:6px 9px;border:1px solid var(--rule-strong);border-radius:2px;
+select{font-family:"Public Sans",system-ui,sans-serif;font-size:14px;font-weight:500;
+  padding:6px 9px;border:1px solid var(--rule-strong);border-radius:6px;
   background:var(--surface);color:var(--ink);min-width:0;max-width:230px}
 select:focus-visible{outline:2px solid var(--accent);outline-offset:-1px}
 .legend{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted)}
@@ -81,22 +85,24 @@ select:focus-visible{outline:2px solid var(--accent);outline-offset:-1px}
 .ramp i{flex:1}
 
 .strip{background:var(--surface);border:1px solid var(--rule);
+  border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);
   display:grid;grid-template-columns:repeat(9,1fr)}
 .strip .cell{padding:9px 6px;text-align:center;border-left:1px solid var(--rule)}
 .strip .cell:first-child{border-left:0}
-.strip .lbl{font-family:"Barlow Condensed",sans-serif;font-size:11.5px;font-weight:600;
+.strip .lbl{font-family:"Public Sans",system-ui,sans-serif;font-size:11.5px;font-weight:600;
   letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .strip .val{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.25}
 .strip .rank{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 .strip .bar-wrap{height:4px;background:var(--rule);margin-top:6px}
 .strip .bar-fill{height:100%}
 
-.tablewrap{overflow-x:auto;border:1px solid var(--rule);background:var(--surface)}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);background:var(--surface);
+  border-radius:var(--radius);box-shadow:var(--shadow)}
 table{border-collapse:collapse;width:100%}
 thead th{position:sticky;top:0;z-index:2;background:var(--surface-2);
-  font-family:"Barlow Condensed",sans-serif;font-size:12.5px;font-weight:600;
-  letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2);
-  padding:10px 9px;border-bottom:2px solid var(--rule-strong);white-space:nowrap;
+  font-family:"Public Sans",system-ui,sans-serif;font-size:11.5px;font-weight:600;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--ink-2);
+  padding:11px 10px;border-bottom:1px solid var(--rule-strong);white-space:nowrap;
   cursor:pointer;user-select:none;text-align:right}
 thead th:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
 thead th .arrow{color:var(--accent);font-size:10px;margin-left:3px}
@@ -109,9 +115,9 @@ td .pad{padding:9px}
 td.num{text-align:right;font-weight:600}
 .pname{font-weight:600;font-size:15px;white-space:nowrap}
 .pmeta{display:flex;align-items:center;gap:7px;margin-top:2px}
-.chip{font-family:"Barlow Condensed",sans-serif;font-size:11px;font-weight:600;
+.chip{font-family:"Public Sans",system-ui,sans-serif;font-size:11px;font-weight:600;
   letter-spacing:.08em;text-transform:uppercase;background:var(--chip);color:var(--chip-ink);
-  padding:1px 6px;border-radius:2px}
+  padding:1px 6px;border-radius:6px}
 .chip.bench{opacity:.7}
 .chip.il{background:var(--bad);color:#fff;opacity:.9}
 .chip.mine{background:var(--accent);color:var(--accent-ink)}
@@ -119,31 +125,101 @@ td.num{text-align:right;font-weight:600}
 .gtd{font-size:11px;color:var(--warn);font-weight:600;letter-spacing:.06em}
 .small-sample{color:var(--warn);font-weight:700;cursor:help}
 .rankpill{display:inline-block;min-width:22px;font-size:12px;font-weight:600;
-  padding:1px 5px;border-radius:2px;background:var(--chip);color:var(--chip-ink)}
+  padding:1px 5px;border-radius:6px;background:var(--chip);color:var(--chip-ink)}
 
 /* compare */
 .cmp{display:grid;grid-template-columns:1fr auto 1fr;gap:0;
-  background:var(--surface);border:1px solid var(--rule)}
+  background:var(--surface);border:1px solid var(--rule);
+  border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
 .cmp .row{display:contents}
 .cmp .c{padding:11px 14px;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums}
-.cmp .c.lbl{text-align:center;font-family:"Barlow Condensed",sans-serif;font-weight:600;
+.cmp .c.lbl{text-align:center;font-family:"Public Sans",system-ui,sans-serif;font-weight:600;
   letter-spacing:.11em;text-transform:uppercase;font-size:12.5px;color:var(--muted);
   background:var(--surface-2);min-width:78px}
 .cmp .c.a{text-align:right}
 .cmp .c.b{text-align:left}
 .cmp .c.win{font-weight:700;color:var(--good)}
 .cmp .c.lose{color:var(--muted)}
-.cmp .head{font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:17px;
-  letter-spacing:.02em;background:var(--surface-2);border-bottom:2px solid var(--rule-strong)}
+.cmp .head{font-family:"Public Sans",system-ui,sans-serif;font-weight:700;font-size:17px;
+  letter-spacing:0;background:var(--surface-2);border-bottom:1px solid var(--rule-strong)}
 .cmp .score{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
 
 .note{font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:5px}
 .note code{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--chip);
-  padding:1px 5px;border-radius:2px}
+  padding:1px 5px;border-radius:6px}
 .note b{color:var(--ink-2)}
 .err{border:1px solid var(--bad);background:color-mix(in srgb,var(--bad) 10%,transparent);
-  padding:12px 14px;color:var(--ink)}
+  padding:12px 14px;color:var(--ink);border-radius:var(--radius)}
 .loading{padding:26px;color:var(--muted)}
+
+/* keepers */
+.kbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.kchip{font-family:"Public Sans",system-ui,sans-serif;font-size:13px;font-weight:500;
+  letter-spacing:0;padding:6px 12px;border:1px solid var(--rule-strong);
+  background:var(--surface);color:var(--ink-2);cursor:pointer;border-radius:999px}
+.kchip[aria-pressed="true"]{font-weight:600}
+.kchip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.kchip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.kchip .n{font-variant-numeric:tabular-nums;opacity:.65;margin-left:5px}
+.ksearch{margin-left:auto}
+.ksearch input{font-family:"Public Sans",system-ui,sans-serif;font-size:14px;padding:6px 10px;
+  border:1px solid var(--rule-strong);border-radius:6px;background:var(--surface);color:var(--ink);width:180px}
+.ksearch input:focus-visible{outline:2px solid var(--accent);outline-offset:-1px}
+
+.kchart{background:var(--surface);border:1px solid var(--rule);padding:16px 16px 10px;
+  border-radius:var(--radius);box-shadow:var(--shadow)}
+.kchart .chead{display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+.kchart h3{font-family:"Public Sans",system-ui,sans-serif;font-weight:600;font-size:16px;
+  letter-spacing:0;margin:0}
+.klegend{display:flex;gap:13px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.klegend span{display:inline-flex;align-items:center;gap:6px}
+.klegend i{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+.kplot{position:relative}
+.kplot svg{width:100%;height:auto;display:block;overflow:visible}
+.k-grid{stroke:var(--rule);stroke-width:1}
+.k-axis{stroke:var(--rule-strong);stroke-width:1}
+.k-parity{stroke:var(--muted);stroke-width:1.25;stroke-dasharray:3 4;opacity:.7}
+.k-tick{fill:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:10px}
+.k-axttl{fill:var(--ink-2);font-family:"Public Sans",system-ui,sans-serif;font-weight:600;
+  font-size:11px;letter-spacing:.09em;text-transform:uppercase}
+.k-zone{fill:var(--muted);font-family:"Public Sans",system-ui,sans-serif;font-weight:600;
+  font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.7}
+.k-dot{cursor:pointer;transition:opacity .12s}
+.k-dot.mine{stroke:var(--ink);stroke-width:2}
+.k-dot.dim{opacity:.12}
+.k-label{fill:var(--ink);font-family:ui-monospace,Menlo,monospace;font-size:9.5px;
+  paint-order:stroke;stroke:var(--surface);stroke-width:3px}
+.ktip{position:absolute;pointer-events:none;z-index:20;background:var(--ink);color:var(--paper);
+  font-size:12px;line-height:1.4;padding:8px 10px;border-radius:8px;
+  box-shadow:var(--shadow);min-width:150px;opacity:0;transition:opacity .1s}
+.ktip strong{font-family:"Public Sans",system-ui,sans-serif;font-weight:700;font-size:13.5px;display:block;margin-bottom:2px}
+.ktip .r{display:flex;justify-content:space-between;gap:14px;font-variant-numeric:tabular-nums}
+.ktip .r span:first-child{opacity:.65}
+
+td.kgap{text-align:right}
+.gapchip{display:inline-block;min-width:2.7em;text-align:center;padding:1px 6px;border-radius:5px;
+  font-variant-numeric:tabular-nums;font-weight:600;font-size:12.5px}
+.g-buy{background:color-mix(in srgb,var(--good) 20%,transparent);color:var(--good)}
+.g-fair{background:var(--chip);color:var(--muted)}
+.g-sell{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
+td.kband{border-left:3px solid var(--band,transparent)}
+tbody tr.mine-row td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+tbody tr.mine-row td.player-col{background:color-mix(in srgb,var(--accent) 12%,var(--surface))}
+.kpool{color:var(--muted);font-style:italic}
+
+.ktrios{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:10px}
+.ktcard{background:var(--surface);border:1px solid var(--rule);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:12px 14px;display:flex;flex-direction:column;gap:7px}
+.ktcard.mine{border-color:var(--accent);border-width:1.5px}
+.ktcard .th{display:flex;align-items:baseline;gap:8px}
+.ktcard .rk{font-family:"Public Sans",system-ui,sans-serif;font-weight:700;font-size:22px;line-height:1;color:var(--muted);font-variant-numeric:tabular-nums}
+.ktcard .tn{font-family:"Public Sans",system-ui,sans-serif;font-weight:700;font-size:15px;line-height:1.1}
+.ktcard .mg{font-size:11.5px;color:var(--muted)}
+.ktcard .kp{display:flex;justify-content:space-between;gap:8px;font-size:13px;border-top:1px solid var(--rule);padding-top:5px}
+.ktcard .kp:first-of-type{border-top:0;padding-top:0}
+.ktcard .kp .kr{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--muted);flex:none}
+.ktcard .sc{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--ink-2);margin-top:1px}
+
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -162,6 +238,7 @@ td.num{text-align:right;font-weight:600}
     <button role="tab" data-view="standings" aria-selected="false">Standings</button>
     <button role="tab" data-view="free-agents" aria-selected="false">Free agents</button>
     <button role="tab" data-view="compare" aria-selected="false">Compare</button>
+    <button role="tab" data-view="keepers" aria-selected="false">Keepers</button>
   </nav>
 
   <div class="controls">
@@ -174,7 +251,7 @@ td.num{text-align:right;font-weight:600}
         <select id="sel-b"></select></label>
       <label class="field" id="w-pos">Position
         <select id="sel-pos"></select></label>
-      <label class="field">Period
+      <label class="field" id="w-period">Period
         <select id="sel-period"></select></label>
     </div>
     <div class="legend" id="legend">
@@ -316,6 +393,161 @@ function strengthStrip(players){
   return el;
 }
 
+// --- keepers ---
+let KDATA = null, KEls = null;
+let kView = "best", kSort = "blended_rank", kDir = 1, kQ = "";
+
+const K_VIEWS = {
+  best: {label: "Best now + future", f: () => true, sort: "blended_rank", dir: 1, cap: 50},
+  all:  {label: "All", f: () => true, sort: "blended_rank", dir: 1},
+  buy:  {label: "Buy-low", f: p => kBand(p.rank_gap) === "buy", sort: "rank_gap", dir: -1},
+  sell: {label: "Sell-high", f: p => kBand(p.rank_gap) === "sell", sort: "rank_gap", dir: 1},
+  pool: {label: "In the pool", f: p => !p.team_name, sort: "blended_rank", dir: 1},
+  mine: {label: "My roster", f: p => p.mine, sort: "blended_rank", dir: 1},
+};
+const K_ORDER = ["best", "all", "buy", "sell", "pool", "mine"];
+const K_COLS = [
+  {k: "player", label: "Player", t: "name"},
+  {k: "team_name", label: "Team", t: "team"},
+  {k: "redraft_rank", label: "RD", t: "num"},
+  {k: "dynasty_rank", label: "DYN", t: "num"},
+  {k: "blended_rank", label: "Blend", t: "num", dp: 1},
+  {k: "avg_pick", label: "ADP", t: "num", dp: 1},
+  {k: "rank_gap", label: "Gap", t: "gap"},
+  {k: "age", label: "Age", t: "num", dp: 1},
+];
+const kBand = g => g >= 12 ? "buy" : g <= -12 ? "sell" : "fair";
+const K_HUE = {buy: "var(--good)", fair: "var(--muted)", sell: "var(--bad)"};
+const kShortTeam = mgr => mgr || "";
+
+function kScatter(players){
+  const CW = 760, CH = 520, PAD = {l: 52, r: 20, t: 28, b: 46}, MAX = 150;
+  const pw = CW - PAD.l - PAD.r, ph = CH - PAD.t - PAD.b;
+  const sx = v => PAD.l + (Math.min(v, MAX) - 1) / (MAX - 1) * pw;
+  const sy = v => PAD.t + (Math.min(v, MAX) - 1) / (MAX - 1) * ph;
+  const pts = players.filter(p => p.redraft_rank <= MAX && p.dynasty_rank <= MAX);
+  const ticks = [1, 25, 50, 75, 100, 125, 150];
+  const KEEP = {"Evan Mobley": -24, "Amen Thompson": 24, "LaMelo Ball": 0};
+  const s = [`<svg viewBox="0 0 ${CW} ${CH}" role="img" aria-label="Redraft rank against dynasty composite rank for ${pts.length} players">`];
+  ticks.forEach(t => {
+    s.push(`<line class="k-grid" x1="${sx(t).toFixed(1)}" y1="${PAD.t}" x2="${sx(t).toFixed(1)}" y2="${PAD.t + ph}"/>`);
+    s.push(`<line class="k-grid" x1="${PAD.l}" y1="${sy(t).toFixed(1)}" x2="${PAD.l + pw}" y2="${sy(t).toFixed(1)}"/>`);
+    s.push(`<text class="k-tick" x="${sx(t).toFixed(1)}" y="${PAD.t + ph + 15}" text-anchor="middle">${t}</text>`);
+    s.push(`<text class="k-tick" x="${PAD.l - 8}" y="${(sy(t) + 3).toFixed(1)}" text-anchor="end">${t}</text>`);
+  });
+  s.push(`<line class="k-axis" x1="${PAD.l}" y1="${PAD.t + ph}" x2="${PAD.l + pw}" y2="${PAD.t + ph}"/>`);
+  s.push(`<line class="k-axis" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + ph}"/>`);
+  s.push(`<line class="k-parity" x1="${sx(1)}" y1="${sy(1)}" x2="${sx(MAX)}" y2="${sy(MAX)}"/>`);
+  s.push(`<text class="k-zone" x="${PAD.l + pw - 6}" y="${PAD.t + 13}" text-anchor="end">dynasty higher ↑</text>`);
+  s.push(`<text class="k-zone" x="${PAD.l + 8}" y="${PAD.t + ph - 8}">↓ redraft higher</text>`);
+  s.push(`<text class="k-axttl" x="${PAD.l + pw / 2}" y="${CH - 8}" text-anchor="middle">Yahoo redraft rank</text>`);
+  s.push(`<text class="k-axttl" transform="rotate(-90 14 ${PAD.t + ph / 2})" x="14" y="${PAD.t + ph / 2}" text-anchor="middle">Dynasty composite rank</text>`);
+  pts.slice().sort((a, b) => (a.mine ? 1 : 0) - (b.mine ? 1 : 0)).forEach(p => {
+    const r = p.mine ? 6 : 4;
+    s.push(`<circle class="k-dot${p.mine ? " mine" : ""}" data-p="${encodeURIComponent(p.player)}" cx="${sx(p.redraft_rank).toFixed(1)}" cy="${sy(p.dynasty_rank).toFixed(1)}" r="${r}" style="fill:${K_HUE[kBand(p.rank_gap)]}"/>`);
+    if (p.player in KEEP)
+      s.push(`<text class="k-label" text-anchor="middle" x="${(sx(p.redraft_rank) + KEEP[p.player]).toFixed(1)}" y="${(sy(p.dynasty_rank) + 21).toFixed(1)}">${p.player.split(" ").slice(-1)[0]}</text>`);
+  });
+  s.push("</svg>");
+  return s.join("");
+}
+
+function kBoardTable(){
+  const wrap = document.createElement("div");
+  wrap.className = "tablewrap";
+  const head = K_COLS.map(c => {
+    const arrow = c.k === kSort ? `<span class="arrow">${kDir < 0 ? "▼" : "▲"}</span>` : "";
+    const cls = c.t === "name" ? "player-col" : "num";
+    return `<th class="${cls}" tabindex="0" data-k="${c.k}">${c.label}${arrow}</th>`;
+  }).join("");
+  wrap.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody id="k-tbody"></tbody></table>`;
+  wrap.querySelectorAll("th").forEach(th => {
+    const go = () => {
+      const k = th.dataset.k;
+      if (k === kSort) kDir = -kDir;
+      else { kSort = k; kDir = (k === "player" || k === "team_name") ? 1 : 1; }
+      kRedraw();
+    };
+    th.addEventListener("click", go);
+    th.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+    });
+  });
+  return wrap;
+}
+
+function kRedraw(){
+  const v = K_VIEWS[kView];
+  let rows = KDATA.players.filter(v.f)
+    .filter(p => !kQ || p.player.toLowerCase().includes(kQ));
+  rows.sort((a, b) => {
+    const x = a[kSort], y = b[kSort];
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return typeof x === "string" ? kDir * x.localeCompare(y) : kDir * (x - y);
+  });
+  const capped = (v.cap && !kQ) ? rows.slice(0, v.cap) : rows;
+
+  if (!KEls) return;
+  const dimming = !!kQ || ["buy", "sell", "pool", "mine"].includes(kView);
+  const shown = new Set(capped.map(p => p.player));
+  KEls.svgRoot.querySelectorAll(".k-dot").forEach(d =>
+    d.classList.toggle("dim", dimming && !shown.has(decodeURIComponent(d.dataset.p))));
+
+  const body = KEls.tbody;
+  if (body) body.innerHTML = capped.map(p => {
+    const band = kBand(p.rank_gap);
+    return `<tr class="${p.mine ? "mine-row" : ""}">` + K_COLS.map(c => {
+      if (c.t === "name")
+        return `<td class="player-col kband" style="--band:${K_HUE[band]}"><div class="pad"><span class="pname">${p.player}</span></div></td>`;
+      if (c.t === "team")
+        return `<td class="num"><div class="pad">${p.team_name ? kShortTeam(p.manager_name) : '<span class="kpool">pool</span>'}</div></td>`;
+      if (c.t === "gap") {
+        const g = (p.rank_gap > 0 ? "+" : "") + p.rank_gap;
+        return `<td class="num kgap"><div class="pad"><span class="gapchip g-${band}">${g}</span></div></td>`;
+      }
+      const val = p[c.k] == null ? "—" : (c.dp != null ? (+p[c.k]).toFixed(c.dp) : p[c.k]);
+      return `<td class="num"><div class="pad">${val}</div></td>`;
+    }).join("") + "</tr>";
+  }).join("");
+
+  KEls.ths.forEach(th => {
+    const cur = th.querySelector(".arrow");
+    if (cur) cur.remove();
+    if (th.dataset.k === kSort) {
+      const a = document.createElement("span");
+      a.className = "arrow"; a.textContent = kDir < 0 ? "▼" : "▲";
+      th.appendChild(a);
+    }
+  });
+
+  let note;
+  if (v.cap && !kQ && rows.length > v.cap) note = `top ${v.cap} of ${rows.length} by blended rank`;
+  else if (kQ) note = `${capped.length} matching “${kQ}”`;
+  else note = `${capped.length} players`;
+  $("#note-body").innerHTML = `<b>RD</b> is Yahoo's Rank column (projected value); ` +
+    `<b>ADP</b> is where the room actually drafts him; <b>DYN</b> is the dynasty ` +
+    `composite. <b>Blend</b> is their mean — low means strong on both boards. ` +
+    `<b>Gap</b> is RD − DYN: <span class="gapchip g-buy">+</span> dynasty likes him ` +
+    `more (buy-low), <span class="gapchip g-sell">−</span> the draft room does ` +
+    `(sell-high). Showing ${note}.`;
+}
+
+function kTrios(trios){
+  const el = document.createElement("div");
+  el.className = "ktrios";
+  el.innerHTML = trios.map((t, i) => `
+    <div class="ktcard${t.mine ? " mine" : ""}">
+      <div class="th"><span class="rk">${i + 1}</span>
+        <span><span class="tn">${t.team}</span> <span class="mg">${t.manager}</span></span></div>
+      ${t.keepers.map(k => `<div class="kp"><span>${k.name}</span>
+        <span class="kr">rd ${k.redraft_rank ?? "—"} · dyn ${k.dynasty_rank}${
+          k.blended_rank != null ? " · " + k.blended_rank.toFixed(0) : ""}</span></div>`).join("")}
+      <div class="sc">trio ${t.trio_score.toFixed(0)}</div>
+    </div>`).join("");
+  return el;
+}
+
 // --- views ---
 const VIEWS = {
   async roster(box){
@@ -403,6 +635,84 @@ const VIEWS = {
       `(${d.a.players} vs ${d.b.players}), percentages weighted by real makes and ` +
       "attempts. Turnovers count for the team with fewer.";
   },
+
+  async keepers(box){
+    if (!KDATA) KDATA = await api("/api/keepers");
+    $("#pool-line").textContent = "";
+    const d = KDATA;
+
+    const chart = document.createElement("div");
+    chart.className = "kchart";
+    chart.innerHTML = `<div class="chead">
+        <h3>Redraft rank vs dynasty rank</h3>
+        <div class="klegend">
+          <span><i style="background:var(--good)"></i>Buy-low</span>
+          <span><i style="background:var(--muted)"></i>Fair</span>
+          <span><i style="background:var(--bad)"></i>Sell-high</span>
+        </div></div>
+      <div class="kplot"><div class="kchartsvg">${kScatter(d.players)}</div><div class="ktip" id="ktip"></div></div>`;
+    box.appendChild(chart);
+
+    const bar = document.createElement("div");
+    bar.className = "kbar";
+    bar.innerHTML = K_ORDER.map(key => {
+      const v = K_VIEWS[key], n = d.players.filter(v.f).length;
+      return `<button class="kchip" data-v="${key}" aria-pressed="${key === kView}">${v.label}<span class="n">${n}</span></button>`;
+    }).join("") +
+      `<span class="ksearch"><input type="search" id="k-search" placeholder="Filter by name…" autocomplete="off" value="${kQ}"></span>`;
+    box.appendChild(bar);
+
+    const tableWrap = kBoardTable();
+    box.appendChild(tableWrap);
+    KEls = {
+      svgRoot: chart.querySelector(".kchartsvg"),
+      tbody: tableWrap.querySelector("tbody"),
+      ths: [...tableWrap.querySelectorAll("th[data-k]")],
+    };
+
+    const th = document.createElement("div");
+    th.className = "eyebrow";
+    th.style.marginTop = "6px";
+    th.textContent = "Keeper trios · top 3 by dynasty score";
+    box.appendChild(th);
+    box.appendChild(kTrios(d.trios));
+
+    bar.addEventListener("click", e => {
+      const b = e.target.closest(".kchip");
+      if (!b) return;
+      kView = b.dataset.v;
+      const v = K_VIEWS[kView]; kSort = v.sort; kDir = v.dir;
+      bar.querySelectorAll(".kchip").forEach(c => c.setAttribute("aria-pressed", String(c === b)));
+      kRedraw();
+    });
+    bar.querySelector("#k-search").addEventListener("input", e => {
+      kQ = e.target.value.trim().toLowerCase(); kRedraw();
+    });
+
+    const tip = chart.querySelector(".ktip"), plot = chart.querySelector(".kplot");
+    chart.querySelector(".kchartsvg").addEventListener("mouseover", e => {
+      const c = e.target.closest(".k-dot");
+      if (!c) return;
+      const p = d.players.find(x => x.player === decodeURIComponent(c.dataset.p));
+      if (!p) return;
+      tip.innerHTML = `<strong>${p.player}</strong>
+        <div class="r"><span>redraft</span><span>${p.redraft_rank}</span></div>
+        <div class="r"><span>dynasty</span><span>${p.dynasty_rank}</span></div>
+        <div class="r"><span>ADP</span><span>${p.avg_pick}</span></div>
+        <div class="r"><span>gap</span><span>${p.rank_gap > 0 ? "+" : ""}${p.rank_gap}</span></div>
+        <div class="r"><span>team</span><span>${p.team_name ? p.manager_name : "pool"}</span></div>`;
+      const pr = plot.getBoundingClientRect(), cr = c.getBoundingClientRect();
+      const x = cr.left - pr.left + cr.width / 2, y = cr.top - pr.top;
+      tip.style.left = Math.max(4, Math.min(x - tip.offsetWidth / 2, pr.width - tip.offsetWidth - 4)) + "px";
+      tip.style.top = (y - tip.offsetHeight - 10) + "px";
+      tip.style.opacity = 1;
+    });
+    chart.querySelector(".kchartsvg").addEventListener("mouseout", e => {
+      if (e.target.closest(".k-dot")) tip.style.opacity = 0;
+    });
+
+    kRedraw();
+  },
 };
 
 // Options come from the players actually available, so the list never offers a
@@ -425,7 +735,8 @@ function syncControls(){
   show("#w-a", VIEW === "compare");
   show("#w-b", VIEW === "compare");
   show("#w-pos", VIEW === "free-agents");
-  $("#legend").hidden = VIEW === "compare";
+  show("#w-period", VIEW !== "keepers");
+  $("#legend").hidden = VIEW === "compare" || VIEW === "keepers";
 }
 
 async function render(){

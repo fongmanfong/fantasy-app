@@ -24,10 +24,11 @@ class Handler(BaseHTTPRequestHandler):
     Serves the single-page app and a read-only JSON API over `query.py`.
 
     `GET /` returns the app; `/api/meta`, `/api/roster?team=`,
-    `/api/free-agents`, `/api/standings` and `/api/compare?a=&b=` return the
-    corresponding `query` call, all taking an optional `?period=` (default
-    "season"). Anything that goes wrong comes back as `{"error": ...}` with a
-    400, since every failure here is a bad request or an empty snapshot.
+    `/api/free-agents`, `/api/standings`, `/api/compare?a=&b=` and
+    `/api/keepers` return the corresponding `query` call. All but `/api/keepers`
+    take an optional `?period=` (default "season"). Anything that goes wrong
+    comes back as `{"error": ...}` with a 400, since every failure here is a bad
+    request, an empty snapshot, or a board that has not been loaded yet.
     """
 
     def __init__(self, *args, con=None, lock=None, **kw):
@@ -76,6 +77,8 @@ class Handler(BaseHTTPRequestHandler):
                     out = query.free_agents(self.con, period)
                 elif url.path == "/api/standings":
                     out = query.standings(self.con, period)
+                elif url.path == "/api/keepers":
+                    out = query.keeper_board(self.con)
                 elif url.path == "/api/compare":
                     a, b = params.get("a"), params.get("b")
                     if not (a and b):
