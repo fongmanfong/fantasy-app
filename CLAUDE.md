@@ -16,7 +16,7 @@ cannot do. This file is the part that is not obvious from the code.
 writers are `pull`, `rankings pull`, `schedule pull` and `history pull`; two of
 them cannot run concurrently, and an open `duckdb` shell — or a running
 `fantasy view` — blocks any of them. Everything else — `sql`, `tables`,
-`pulls`, `rules`, `matchup`, `waivers`, `report`, `view`, `rankings show`,
+`status`, `rules`, `matchup`, `waivers`, `report`, `view`, `rankings show`,
 `schedule show`, `history show` — opens the file read-only and *can* share it.
 Do not fan analysis out across parallel shells expecting them to interleave —
 run them in sequence.
@@ -83,10 +83,11 @@ exist at all.
 The rest of the CLI answers narrower questions:
 
 ```sh
+.venv/bin/fantasy status                     # how stale each of the five sequences is
 .venv/bin/fantasy rules                      # what the model reads vs assumes
 .venv/bin/fantasy matchup "Guan Yu"          # per-category odds against one team
 .venv/bin/fantasy matchup                    # against all 11 opponents
-.venv/bin/fantasy waivers --vs Starboy       # add/drops for one matchup
+.venv/bin/fantasy waivers Starboy            # add/drops for one matchup
 .venv/bin/fantasy sql "select * from v_my_team"
 ```
 
@@ -106,7 +107,7 @@ with a league key, because none is specific to one league.
 .venv/bin/fantasy rankings composite build   # fold every source into one ordering
 .venv/bin/fantasy rankings composite show --team me
 .venv/bin/fantasy schedule pull              # season inferred from today's date
-.venv/bin/fantasy schedule show --team BOS
+.venv/bin/fantasy schedule show --nba-team BOS
 .venv/bin/fantasy history pull               # only the seasons not yet stored
 .venv/bin/fantasy history show "Trae Young"
 ```
@@ -294,8 +295,8 @@ fantasy/
 ```
 
 `cli.py` is presentation, but it is not *only* rendering: a few commands build
-their own display SQL (`schedule show`, `rankings show`, `pulls`), `report`
-owns writing the file, and `auth status` makes a live call. The line that does
+their own display SQL (`schedule show`, `rankings show`), `report` owns writing
+the file, and `auth status` makes a live call. The line that does
 hold, and is worth keeping, is that **no model or simulation logic lives in the
 CLI** — if you find yourself computing something there that a caller other than
 the terminal would want, it belongs in `query.py` or `analysis/`.
@@ -311,6 +312,12 @@ the terminal would want, it belongs in `query.py` or `analysis/`.
   `composite_runs` is **not** a fourth pull sequence — nothing there comes off
   the wire — but it is stamped and resolved the same way, and `composite build`
   appends a run rather than replacing one, so two orderings can be compared.
+  **`fantasy status` is how you read all of that back** — `query.store_status`
+  and its `SEQUENCES` table, one row per league, source and season, because
+  three of the five open a row per subject and a single "last pulled" would hide
+  a season that failed while its siblings succeeded. A new sequence belongs in
+  `SEQUENCES`; nothing else has to change. Before quoting a number out of the
+  store, check that what produced it is not months older than the rest.
 - **The schema documents itself in the catalogue.** Every table, view and
   non-obvious column carries a `COMMENT`, applied by the block at the end of
   `schema.sql`. They are readable from a read-only connection, so

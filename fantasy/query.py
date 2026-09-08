@@ -375,8 +375,8 @@ def keeper_board(con) -> dict:
     ).fetchone()[0]
     if not exists or con.execute("select count(*) from redraft_ranks").fetchone()[0] == 0:
         raise RuntimeError(
-            "No redraft board loaded. Run `python -m fantasy.redraft` to write "
-            "redraft_ranks and rebuild v_redraft_vs_dynasty.")
+            "No redraft board loaded. Run `fantasy rankings redraft load` to "
+            "write redraft_ranks and rebuild v_redraft_vs_dynasty.")
     if con.execute("select count(*) from v_composite_rankings").fetchone()[0] == 0:
         raise RuntimeError(
             "No dynasty composite yet, so the redraft board has nothing to "
@@ -446,3 +446,65 @@ def keeper_board(con) -> dict:
         "unmatched": unmatched,
         "counts": {"matched": len(players), "unmatched": len(unmatched)},
     }
+
+
+# Every append-only sequence the store keeps, in the order `fantasy status`
+# prints them. Each is stamped and resolved independently — a stale schedule
+# and a fresh league snapshot coexist happily — so freshness is per-sequence
+# and there is no single "last updated" to report. `subject` is the column that
+# says *what* was pulled: a league key, a source name, a season.
+SEQUENCES = [
+    ("league", "pulls", "pull_id", "league_key", "pulled_at"),
+    ("rankings", "ranking_pulls", "ranking_pull_id", "source", "pulled_at"),
+    ("schedule", "nba_schedule_pulls", "pull_id", "season", "pulled_at"),
+    ("seasons", "nba_season_pulls", "pull_id", "season", "pulled_at"),
+    # Derived rather than pulled — nothing here comes off the wire — but
+    # stamped and resolved the same way, and it goes stale against the ranking
+    # pulls underneath it, so it belongs in the same freshness picture.
+    ("composite", "composite_runs", "run_id", "kind", "computed_at"),
+]
+
+
+def store_status(con) -> list[dict]:
+    """
+    The newest entry in each append-only sequence, per subject.
+
+    One row per (sequence, subject) — per league, per ranking source, per
+    season — because that is the grain at which each sequence actually goes
+    stale: three of the five open a row per subject, so a single "last pulled"
+    would hide a season that failed while its siblings succeeded.
+
+    Newest, not newest *successful*: a sequence whose last attempt failed is
+    exactly what this is for, and reporting the older success behind it would
+    hide that.
+
+    A sequence whose table is missing is reported as absent rather than raised
+    on: a database written before that sequence existed picks the table up on
+    its next pull, and saying so is more useful than a SQL error.
+    """
+    have = {r[0] for r in con.execute(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema = 'main'").fetchall()}
+
+    out = []
+    for name, table, id_col, subject_col, time_col in SEQUENCES:
+        if table not in have:
+            out.append({"sequence": name, "table": table, "present": False,
+                        "entries": []})
+            continue
+        rows = con.execute(f"""
+            select {subject_col}, {id_col}, {time_col}, status, note
+            from {table}
+            qualify row_number() over (
+                partition by {subject_col} order by {id_col} desc) = 1
+            order by {subject_col}
+        """).fetchall()
+        out.append({
+            "sequence": name, "table": table, "present": True,
+            "entries": [
+                {"subject": subject, "id": eid, "at": at, "status": status,
+                 "note": note}
+                for subject, eid, at, status, note in rows
+            ],
+        })
+    return out
