@@ -47,11 +47,12 @@ They are deliberately kept **out of** the database, which holds only league data
 fantasy leagues                      # list the leagues on your account
 fantasy pull                         # snapshot your league (or pass a league key)
 fantasy pull 466.l.28641 --skip-stats
+fantasy status                       # how fresh each part of the store is
 fantasy sql "select * from v_my_team"
 fantasy view                         # open the league interface in your browser
 fantasy rules                        # what the model reads, and what it assumes
 fantasy matchup "Guan Yu"            # your odds in each category against them
-fantasy waivers                      # free-agent pickups ranked by odds bought
+fantasy waivers "Guan Yu"            # free-agent pickups ranked by odds bought
 fantasy report                       # one standing report, for you or an agent
 ```
 
@@ -62,12 +63,12 @@ fantasy report                       # one standing report, for you or an agent
 | `fantasy auth logout` | Delete the stored token. |
 | `fantasy leagues` | List your NBA leagues and their league keys. |
 | `fantasy pull [LEAGUE_KEY]` | Snapshot a league. Omit the key if you only have one. |
-| `fantasy pulls` | List past pulls with status and timestamps. |
+| `fantasy status` | How fresh each append-only sequence is; `-v` for full notes. |
 | `fantasy tables` | Every table and view with row counts. |
 | `fantasy view` | Launch the league interface in your browser. |
 | `fantasy rules` | League rules the model runs under, and what it had to assume. |
 | `fantasy matchup [TEAM]` | Win probability per category against a team, or the whole league. |
-| `fantasy waivers` | Rank free-agent add/drops by how much they move the odds. |
+| `fantasy waivers [TEAM]` | Rank free-agent add/drops by how much they move the odds. |
 | `fantasy report` | One standing markdown report over everything above. |
 | `fantasy sql "<query>"` | Run ad-hoc SQL. |
 | `fantasy rankings sources` | List the ranking sites this app knows how to scrape. |
@@ -78,12 +79,30 @@ fantasy report                       # one standing report, for you or an agent
 | `fantasy rankings redraft load` | Reload the pasted Yahoo redraft board and rebuild the reconciliation view. |
 | `fantasy rankings redraft show` | The redraft board next to the dynasty composite; `--team`, `--gap`, `--trios`. |
 | `fantasy schedule pull [SEASON]` | Fetch the NBA game schedule and append it to the database. |
-| `fantasy schedule show` | Show the latest pulled schedule, optionally filtered by team. |
+| `fantasy schedule show` | Show the latest pulled schedule; `--nba-team BOS` to filter. |
 | `fantasy history pull [SEASONS]` | Fetch the seasons not already stored and append them. |
 | `fantasy history show [PLAYER]` | Show stored season stats per game, or what is stored. |
 
 `pull` options: `--skip-stats` (much faster), `--periods season,last_7,last_14,last_30`,
 `--fa-limit N` (cap the free-agent pool; default is the whole pool).
+
+### Knowing what is stale
+
+The store keeps five append-only sequences that are pulled and resolved
+independently — the league snapshot, each ranking source, the NBA schedule, each
+past season, and the composite derived over the rankings. A stale schedule
+beside a fresh league snapshot is a normal state rather than a fault, so there is
+no single "last updated" to report. `fantasy status` prints one row per thing
+that can go stale on its own, and says when the stored composite is older than a
+ranking pull it should have folded in.
+
+```sh
+fantasy status        # one row per league, source, season and run
+fantasy status -v     # ...with each entry's note spelled out in full
+```
+
+`fantasy pulls` is the old name for this, and still works as a hidden alias; it
+only ever listed the league sequence, which is one of the five.
 
 ### The interface
 
@@ -290,7 +309,7 @@ assuming a flat league-wide number.
 ```sh
 fantasy schedule pull            # season inferred from today's date
 fantasy schedule pull 2026-27    # or pull a specific season explicitly
-fantasy schedule show --team BOS
+fantasy schedule show --nba-team BOS
 ```
 
 Team columns are Yahoo-style tricodes (`BOS`, `GSW`, ...), so the schedule joins
@@ -469,7 +488,7 @@ losing rather than losing to one particular roster.
 
 ```sh
 fantasy waivers                    # best add/drops against the league
-fantasy waivers --vs Starboy       # optimise for one matchup
+fantasy waivers Starboy            # optimise for one matchup
 fantasy waivers --by-player        # one row per free agent, with their best drop
 ```
 

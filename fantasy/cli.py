@@ -3,6 +3,7 @@ import logging
 import sys
 import webbrowser
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -25,7 +26,9 @@ from .yahoo.client import STAT_PERIODS, YahooClient
 app = typer.Typer(add_completion=False, help=__doc__, no_args_is_help=True)
 auth_app = typer.Typer(help="Authenticate with Yahoo.", no_args_is_help=True)
 app.add_typer(auth_app, name="auth")
-rankings_app = typer.Typer(help="Pull external player rankings into DuckDB.", no_args_is_help=True)
+rankings_app = typer.Typer(
+    help="Player rankings: scraped sources, the composite over them, and "
+         "Yahoo's redraft board.", no_args_is_help=True)
 app.add_typer(rankings_app, name="rankings")
 composite_app = typer.Typer(help="Fold every ranking source into one ordering.",
                            no_args_is_help=True)
@@ -33,9 +36,11 @@ rankings_app.add_typer(composite_app, name="composite")
 redraft_app = typer.Typer(help="Yahoo's redraft board, reconciled with the dynasty "
                                "composite.", no_args_is_help=True)
 rankings_app.add_typer(redraft_app, name="redraft")
-schedule_app = typer.Typer(help="Pull the NBA game schedule into DuckDB.", no_args_is_help=True)
+schedule_app = typer.Typer(help="The NBA game schedule the model fits "
+                                "games-per-week from.", no_args_is_help=True)
 app.add_typer(schedule_app, name="schedule")
-history_app = typer.Typer(help="Pull past-season NBA player stats into DuckDB.",
+history_app = typer.Typer(help="Past-season NBA player stats — the only thing "
+                               "in the store that shows a trajectory.",
                           no_args_is_help=True)
 app.add_typer(history_app, name="history")
 
@@ -83,8 +88,11 @@ def _truncated(shown: list, total: list) -> None:
         console.print(f"[dim]{len(shown)} of {len(total)} rows — raise with --limit 0[/dim]")
 
 
-# Options shared by `matchup`, `waivers` and `report`. Declared once so the
-# three commands cannot drift apart in defaults or help text, as --seed had.
+# Options shared by the simulating commands — `matchup`, `waivers` and
+# `report` — declared once so they cannot drift apart in defaults or help text,
+# as --seed had. Not every command takes every one, and `waivers` deliberately
+# declares its own --sims: it evaluates hundreds of swaps against the same
+# draws, so it defaults an order of magnitude lower.
 SIMS_OPT = typer.Option(10000, "--sims", help="Simulated weeks.")
 GAMES_OPT = typer.Option(None, "--games",
                          help="Override average NBA games per team per week. "
@@ -257,19 +265,102 @@ def pull_cmd(
             err.print(f"  - {e}")
 
 
-@app.command("pulls")
-def pulls_cmd(limit: int = typer.Option(20, "--limit")):
-    """List past pulls."""
+def _age(then: datetime) -> str:
+    """How long ago, coarsely. Freshness is the question; minutes are not."""
+    delta = datetime.now(timezone.utc).replace(tzinfo=None) - then
+    days, seconds = delta.days, delta.seconds
+    if days > 0:
+        return f"{days}d ago"
+    if seconds >= 3600:
+        return f"{seconds // 3600}h ago"
+    return f"{max(seconds // 60, 1)}m ago"
+
+
+@app.command("status")
+def status_cmd(
+    verbose: bool = typer.Option(False, "--verbose", "-v",
+                                 help="Show each entry's note in full."),
+):
+    """
+    How fresh each part of the store is.
+
+    The store keeps five append-only sequences that are pulled and resolved
+    independently, so there is no single "last updated" — a stale schedule and
+    a fresh league snapshot are a normal state, not a fault. One row per thing
+    that can go stale on its own: per league, per ranking source, per season.
+    """
     with read_only() as con:
-        rows = con.execute(
-            "SELECT pull_id, league_key, pulled_at, status, note "
-            "FROM pulls ORDER BY pull_id DESC LIMIT ?", [limit]
-        ).fetchall()
-    render(
-        [(p, lk, f"{t:%Y-%m-%d %H:%M}", s, (n or "")[:60]) for p, lk, t, s, n in rows],
-        ["pull", "league", "pulled_at (UTC)", "status", "note"],
-        title="Pulls",
-    )
+        sequences = query.store_status(con)
+
+    console.print(f"\n[bold]{config.DB_PATH}[/bold]")
+
+    # The note is the widest thing here and the least urgent, so it is clipped
+    # to whatever keeps a row on one line and spelled out in full under --verbose.
+    # A status table that wraps to three lines per row cannot be scanned, which
+    # is the only thing it is for. The five fixed columns and their borders cost
+    # about 62 columns; whatever the terminal has beyond that goes to the note,
+    # and rich would otherwise wrap rather than clip.
+    note_width = max(12, console.width - 62)
+    rows = []
+    for seq in sequences:
+        if not seq["present"]:
+            rows.append((seq["sequence"], "[dim]—[/dim]", "", "",
+                         "[dim]not created yet[/dim]"))
+            continue
+        if not seq["entries"]:
+            rows.append((seq["sequence"], "[dim]—[/dim]", "", "",
+                         "[yellow]never pulled[/yellow]"))
+            continue
+        for i, e in enumerate(seq["entries"]):
+            colour = {"success": "green", "partial": "yellow"}.get(e["status"], "red")
+            rows.append((
+                seq["sequence"] if i == 0 else "",
+                e["subject"],
+                f"#{e['id']}",
+                _age(e["at"]),
+                f"[{colour}]{e['status']}[/{colour}]",
+                _clip(e["note"] or "", note_width),
+            ))
+    render(rows, ["sequence", "subject", "last", "age", "status", "note"])
+
+    if verbose:
+        for seq in sequences:
+            for e in seq["entries"]:
+                if e["note"]:
+                    console.print(f"[cyan]{seq['sequence']} {e['subject']}[/cyan] "
+                                  f"[dim]#{e['id']} — {e['note']}[/dim]")
+
+    _stale_composite(sequences)
+    if not verbose:
+        console.print("[dim]`fantasy status -v` for full notes.[/dim]")
+
+
+def _stale_composite(sequences: list[dict]) -> None:
+    """
+    Say when the composite predates a ranking pull it should have folded in.
+
+    The composite is derived, so nothing invalidates it when a source underneath
+    it moves — `composite build` appends a new run rather than replacing one,
+    and until it is re-run the stored ordering is simply older than its inputs.
+    """
+    by_name = {s["sequence"]: s for s in sequences}
+    comp = by_name.get("composite", {}).get("entries") or []
+    ranks = by_name.get("rankings", {}).get("entries") or []
+    if not comp or not ranks:
+        return
+    newest_rank = max(e["at"] for e in ranks)
+    if any(c["at"] < newest_rank for c in comp):
+        console.print("[yellow]The composite is older than the rankings under "
+                      "it.[/yellow] [dim]`fantasy rankings composite build` to "
+                      "fold the newer pulls in.[/dim]")
+
+
+@app.command("pulls", hidden=True)
+def pulls_cmd():
+    """Deprecated alias for `fantasy status`."""
+    err.print("[yellow]`fantasy pulls` is now `fantasy status`[/yellow] "
+              "[dim](and covers all five sequences, not just the league).[/dim]")
+    status_cmd(verbose=False)
 
 
 @app.command("tables")
@@ -434,7 +525,11 @@ def _render_field(r: dict) -> None:
 
 @app.command("waivers")
 def waivers_cmd(
-    versus: str = typer.Option(None, "--vs", help="Optimise against one opponent. Default: the whole league."),
+    opponent: str = typer.Argument(None, help="Opponent to optimise against: team "
+                                   "key, id, or part of a name. Omitted: the whole "
+                                   "league."),
+    versus: str = typer.Option(None, "--vs", help="The same thing as the positional "
+                                                  "argument, kept for compatibility."),
     team: str = typer.Option(None, "--team", help="Team to improve. Default: yours."),
     top: int = typer.Option(12, "--top", help="Moves to show."),
     drops: int = typer.Option(6, "--drops", help="How many of your players to consider dropping."),
@@ -447,6 +542,9 @@ def waivers_cmd(
                                    help="One row per free agent, with their best drop."),
 ):
     """Simulate free-agent pickups and rank them by the odds they buy."""
+    # `matchup` has always taken the opponent positionally; --vs came first here
+    # and stays, so both spellings work and neither has to be unlearned.
+    versus = opponent or versus
     window = _periods(periods)
     with console.status("[cyan]simulating[/cyan]"):
         with read_only() as con:
@@ -502,9 +600,12 @@ def report_cmd(
                             f"{report_mod.DEFAULT_OUT}. Use - for stdout."),
     sims: int = SIMS_OPT,
     games: float = GAMES_OPT,
+    periods: str = PERIODS_OPT,
     seed: int = SEED_OPT,
     min_gp: float = MIN_GP_OPT,
     top: int = typer.Option(10, "--top", help="Free agents to rank."),
+    drops: int = typer.Option(6, "--drops",
+                              help="How many of your players to consider dropping."),
 ):
     """
     Write a standing report on the league, for a person or an agent to read.
@@ -519,7 +620,8 @@ def report_cmd(
     with err.status("[cyan]building report[/cyan]"):
         with read_only() as con:
             data = report_mod.build(con, team=team, sims=sims, seed=seed,
-                                    games_per_week=games, top=top, min_gp=min_gp)
+                                    games_per_week=games, periods=_periods(periods),
+                                    top=top, drops=drops, min_gp=min_gp)
             text = report_mod.render_markdown(data)
 
     if out == "-":
@@ -543,13 +645,14 @@ def report_cmd(
 
 @app.command("sql")
 def sql_cmd(
-    query: str = typer.Argument(..., help="SQL to run against the DuckDB file."),
+    statement: str = typer.Argument(..., metavar="QUERY",
+                                    help="SQL to run against the DuckDB file."),
     limit: int = typer.Option(50, "--limit", help="Max rows to print. 0 for all."),
 ):
     """Run ad-hoc SQL."""
     with read_only() as con:
         try:
-            cursor = con.execute(query)
+            cursor = con.execute(statement)
         except Exception as exc:
             fail(str(exc))
         headers = [d[0] for d in cursor.description]
@@ -921,21 +1024,24 @@ def schedule_pull_cmd(
 @schedule_app.command("show")
 def schedule_show_cmd(
     season: str = typer.Option(None, "--season", help="Default: inferred from today's date."),
-    team: str = typer.Option(None, "--team", help="Filter to one NBA team, e.g. BOS."),
+    # --team means a fantasy team in every other command; here it is an NBA
+    # tricode. The honest name leads, the old one still works.
+    team: str = typer.Option(None, "--nba-team", "--team",
+                             help="Filter to one NBA team, e.g. BOS."),
     limit: int = typer.Option(25, "--limit", help="Rows to show. 0 for all."),
 ):
     """Show the latest pulled schedule for a season."""
     season = season or nba_client.current_season()
-    query = ("SELECT game_date, home_team, away_team, game_label "
-              "FROM v_nba_schedule WHERE season = ?")
+    sql = ("SELECT game_date, home_team, away_team, game_label "
+           "FROM v_nba_schedule WHERE season = ?")
     params = [season]
     if team:
-        query += " AND (home_team = ? OR away_team = ?)"
+        sql += " AND (home_team = ? OR away_team = ?)"
         params += [team.upper(), team.upper()]
-    query += " ORDER BY game_date"
+    sql += " ORDER BY game_date"
 
     with read_only() as con:
-        rows = con.execute(query, params).fetchall()
+        rows = con.execute(sql, params).fetchall()
 
     if not rows:
         console.print(f"[yellow]No schedule stored for {season!r} yet.[/yellow] "
