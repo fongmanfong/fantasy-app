@@ -5,7 +5,7 @@ Each entry pairs a default URL with a pure `parse(text) -> list[dict]` function 
 network inside the parser, mirroring yahoo/parse.py vs yahoo/client.py, and for the
 same reason: the parser is what breaks when a site changes its template, and it is
 the part worth testing against a saved fixture rather than a live page. `text` is
-whatever the source serves: HTML for the two scrapes, CSV for angle.
+whatever the source serves: HTML for the three scrapes, CSV for angle.
 
 Row dicts share a common shape:
     rank         int | None   — the source's primary ranking
@@ -23,7 +23,7 @@ An entry's `kind` says which lists it is comparable with, and is the only thing
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from . import angle, dynatyze, hashtagbasketball
+from . import angle, dynatyze, hashtagbasketball, rotowire
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,8 @@ class Source:
     One ranking site: where to fetch it, and the pure parser for what comes back.
 
     The two optional fields exist for sources that have no permanent home — angle
-    publishes each update as a new post pointing at a new Google Sheet:
+    publishes each update as a new post pointing at a new Google Sheet, rotowire
+    each season as a new article:
 
     `resolve` runs before the fetch and turns the URL the user has to hand into
     the one actually worth downloading. It is given the shared fetcher rather
@@ -71,6 +72,12 @@ SOURCES: dict[str, Source] = {
         parse=angle.parse_dynasty,
         kind="dynasty",
         resolve=angle.resolve,
+        remembers_url=True,
+    ),
+    "rotowire_dynasty": Source(
+        url=rotowire.DYNASTY_URL,
+        parse=rotowire.parse_dynasty,
+        kind="dynasty",
         remembers_url=True,
     ),
 }

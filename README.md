@@ -149,9 +149,10 @@ fantasy rankings show hashtag_dynasty  # the latest pull, ranked
 fantasy rankings show hashtag_dynasty --notes   # ...and what it wrote about them
 ```
 
-Three sources ship today: `hashtag_dynasty` and `dynatyze_dynasty`, both scrapes of a
-page at a fixed address, and `angle_dynasty` — Angle Fantasy Basketball's Top 300 9-cat
-list, three rankers plus a consensus average.
+Four sources ship today: `hashtag_dynasty` and `dynatyze_dynasty`, both scrapes of a
+page at a fixed address, `angle_dynasty` — Angle Fantasy Basketball's Top 300 9-cat
+list, three rankers plus a consensus average — and `rotowire_dynasty`, RotoWire's
+annual Top 100 dynasty/keeper article (rank, team and age; no positions).
 
 Angle is the awkward one, and the reason `rankings pull` has the machinery it does: each
 edition is a new WordPress post embedding a new Google Sheet, so there is no permanent
@@ -160,7 +161,8 @@ rankings post, the embedded `pubhtml` link, a normal `/edit` sheet URL, or an
 `output=csv` link — and rewrites it to the sheet's CSV export (following the post's
 `<iframe>` when given an article). That URL is then remembered: the next
 `fantasy rankings pull angle_dynasty` reuses it, so you only pass `--url` when a new
-edition is published.
+edition is published. RotoWire works the same way for the same reason — each season's
+rankings are a new article with a new id — so its `--url` is only needed once a year.
 
 ```sh
 fantasy rankings pull angle_dynasty                      # the last URL pulled
@@ -646,6 +648,7 @@ fantasy/
 │   │   ├── fetch.py             # shared HTTP GET for ranking sites
 │   │   ├── hashtagbasketball.py # pure HTML → rows parser, one file per site
 │   │   ├── dynatyze.py          # pure JSON-LD → rows parser
+│   │   ├── rotowire.py          # pure article-table → rows parser
 │   │   └── angle.py             # Google Sheet CSV → rows, plus the URL rewriting
 │   │                            # that finds the sheet behind a rankings post
 │   ├── schedule/
@@ -673,7 +676,7 @@ docs/
 `tests/test_analysis.py` the simulation math against hand-built players,
 `tests/test_report.py` the report's formatting and derivations against a fixture
 document, `tests/test_names.py` the name standardizer, `tests/test_rankings.py`,
-`tests/test_dynatyze.py` and `tests/test_angle.py` each ranking source against a
+`tests/test_dynatyze.py`, `tests/test_rotowire.py` and `tests/test_angle.py` each ranking source against a
 saved fixture of what that site really serves (plus, for Angle, the sheet-URL
 rewriting), `tests/test_schedule.py` the schedule parser against a ScheduleLeagueV2-shaped
 fixture, `tests/test_history.py` the player-totals parser and which seasons a run
