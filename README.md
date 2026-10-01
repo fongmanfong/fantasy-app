@@ -149,10 +149,11 @@ fantasy rankings show hashtag_dynasty  # the latest pull, ranked
 fantasy rankings show hashtag_dynasty --notes   # ...and what it wrote about them
 ```
 
-Four sources ship today: `hashtag_dynasty` and `dynatyze_dynasty`, both scrapes of a
+Five sources ship today: `hashtag_dynasty` and `dynatyze_dynasty`, both scrapes of a
 page at a fixed address, `angle_dynasty` — Angle Fantasy Basketball's Top 300 9-cat
-list, three rankers plus a consensus average — and `rotowire_dynasty`, RotoWire's
-annual Top 100 dynasty/keeper article (rank, team and age; no positions).
+list, three rankers plus a consensus average — `rotowire_dynasty`, RotoWire's
+annual Top 100 dynasty/keeper article (rank, team and age; no positions), and
+`lineupexperts_dynasty`, LineupExperts' 400-plus dynasty draft board.
 
 Angle is the awkward one, and the reason `rankings pull` has the machinery it does: each
 edition is a new WordPress post embedding a new Google Sheet, so there is no permanent
@@ -167,6 +168,16 @@ rankings are a new article with a new id — so its `--url` is only needed once 
 ```sh
 fantasy rankings pull angle_dynasty                      # the last URL pulled
 fantasy rankings pull angle_dynasty --url <new post>     # ...until a new edition
+```
+
+LineupExperts can't be fetched at all: the page sits behind Cloudflare's bot challenge,
+which turns away anything that isn't a real browser. So that source reads the CSV the
+page lets you download instead, and refuses to pull without one. Refreshing it means
+downloading the export again. `--file` works for any source, if a saved copy is what you
+have.
+
+```sh
+fantasy rankings pull lineupexperts_dynasty --file ~/Downloads/<export>.csv
 ```
 
 Each Angle row also carries the sheet's own title (`Top 300 9-Cat Dynasty Rankings July
@@ -649,6 +660,7 @@ fantasy/
 │   │   ├── hashtagbasketball.py # pure HTML → rows parser, one file per site
 │   │   ├── dynatyze.py          # pure JSON-LD → rows parser
 │   │   ├── rotowire.py          # pure article-table → rows parser
+│   │   ├── lineupexperts.py     # pure CSV-export → rows parser (read from --file)
 │   │   └── angle.py             # Google Sheet CSV → rows, plus the URL rewriting
 │   │                            # that finds the sheet behind a rankings post
 │   ├── schedule/
@@ -676,7 +688,7 @@ docs/
 `tests/test_analysis.py` the simulation math against hand-built players,
 `tests/test_report.py` the report's formatting and derivations against a fixture
 document, `tests/test_names.py` the name standardizer, `tests/test_rankings.py`,
-`tests/test_dynatyze.py`, `tests/test_rotowire.py` and `tests/test_angle.py` each ranking source against a
+`tests/test_dynatyze.py`, `tests/test_rotowire.py`, `tests/test_lineupexperts.py` and `tests/test_angle.py` each ranking source against a
 saved fixture of what that site really serves (plus, for Angle, the sheet-URL
 rewriting), `tests/test_schedule.py` the schedule parser against a ScheduleLeagueV2-shaped
 fixture, `tests/test_history.py` the player-totals parser and which seasons a run

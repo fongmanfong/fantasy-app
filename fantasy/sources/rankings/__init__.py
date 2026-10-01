@@ -5,7 +5,8 @@ Each entry pairs a default URL with a pure `parse(text) -> list[dict]` function 
 network inside the parser, mirroring yahoo/parse.py vs yahoo/client.py, and for the
 same reason: the parser is what breaks when a site changes its template, and it is
 the part worth testing against a saved fixture rather than a live page. `text` is
-whatever the source serves: HTML for the three scrapes, CSV for angle.
+whatever the source serves: HTML for the three scrapes, CSV for angle and for
+lineupexperts — the last read from a file the user downloaded, not fetched.
 
 Row dicts share a common shape:
     rank         int | None   — the source's primary ranking
@@ -23,7 +24,7 @@ An entry's `kind` says which lists it is comparable with, and is the only thing
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from . import angle, dynatyze, hashtagbasketball, rotowire
+from . import angle, dynatyze, hashtagbasketball, lineupexperts, rotowire
 
 
 @dataclass(frozen=True)
@@ -48,12 +49,18 @@ class Source:
     only comparable, as `analysis/composite.py` compares them — when they rank
     on the same axis, so a redraft or keeper list registered here would carry a
     different kind and be composited separately rather than averaged in.
+
+    `from_file` marks a source whose site will not serve its rankings to a
+    script at all — lineupexperts sits behind a bot challenge — so a pull has to
+    be given `--file`, the export the user downloaded in a browser, and refuses
+    to try the network without one. `url` is then only provenance.
     """
     url: str
     parse: Callable[[str], list[dict]]
     kind: str = "dynasty"
     resolve: Callable[[str, Callable[[str], str]], str] | None = None
     remembers_url: bool = False
+    from_file: bool = False
 
 
 SOURCES: dict[str, Source] = {
@@ -79,5 +86,11 @@ SOURCES: dict[str, Source] = {
         parse=rotowire.parse_dynasty,
         kind="dynasty",
         remembers_url=True,
+    ),
+    "lineupexperts_dynasty": Source(
+        url=lineupexperts.DYNASTY_URL,
+        parse=lineupexperts.parse_dynasty,
+        kind="dynasty",
+        from_file=True,
     ),
 }

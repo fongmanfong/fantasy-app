@@ -7,6 +7,7 @@ pull happens on its own cadence and isn't specific to one Yahoo league.
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import query
 from .names import normalize
@@ -34,7 +35,7 @@ class RankingPullResult:
         return "error" if self.error else "success"
 
 
-def run(source: str, url: str | None = None) -> RankingPullResult:
+def run(source: str, url: str | None = None, file: str | None = None) -> RankingPullResult:
     """
     Scrape one ranking site and append it, matching rows to the league snapshot.
 
@@ -50,6 +51,11 @@ def run(source: str, url: str | None = None) -> RankingPullResult:
     row stays what was asked for, since that is the address that will still make
     sense next month.
 
+    `file` reads the rankings from a local file instead of the network — the
+    only way to pull a `from_file` source, whose site will not serve a script,
+    and usable for any other when a saved copy is what you have. The URL is
+    still recorded as where the file came from, and the note names the file.
+
     Rows that do not match a player are stored anyway, with a null `player_key`
     — an unmatched name is a signal about `names.normalize`, and throwing it
     away would hide the miss. Raises only on an unknown source; a fetch, resolve
@@ -60,6 +66,12 @@ def run(source: str, url: str | None = None) -> RankingPullResult:
         raise RuntimeError(f"Unknown ranking source {source!r}. Known: {known}")
 
     src = SOURCES[source]
+    if src.from_file and not file:
+        # A usage error, not a failed pull: nothing was attempted, so no pull row.
+        raise RuntimeError(
+            f"{source} cannot be fetched — its site blocks scripts. Download its "
+            f"export from {src.url} in a browser and pass it with --file."
+        )
 
     with db.connect() as con:
         db.init_schema(con)
@@ -74,9 +86,13 @@ def run(source: str, url: str | None = None) -> RankingPullResult:
         )
 
         try:
-            fetch_url = src.resolve(source_url, fetch.get) if src.resolve else source_url
-            result.fetched_url = fetch_url
-            rows = src.parse(fetch.get(fetch_url))
+            if file:
+                result.fetched_url = f"file:{Path(file).name}"
+                rows = src.parse(Path(file).expanduser().read_text(encoding="utf-8-sig"))
+            else:
+                fetch_url = src.resolve(source_url, fetch.get) if src.resolve else source_url
+                result.fetched_url = fetch_url
+                rows = src.parse(fetch.get(fetch_url))
         except Exception as exc:
             logger.warning("ranking pull %s failed: %s", source, exc)
             result.error = str(exc)
@@ -110,7 +126,8 @@ def run(source: str, url: str | None = None) -> RankingPullResult:
         note = f"{result.matched}/{result.rows} matched to the league snapshot" if result.rows else "no rows parsed"
         if result.fetched_url and result.fetched_url != source_url:
             # Which document these numbers actually came from, kept because a
-            # resolved URL (an edition of a sheet) outlives the page linking to it.
+            # resolved URL (an edition of a sheet) outlives the page linking to it,
+            # and a file read leaves nothing else saying which export it was.
             note = f"{note}; fetched {result.fetched_url}"
         db.complete_ranking_pull(con, ranking_pull_id, result.status, note)
 
