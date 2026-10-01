@@ -669,7 +669,9 @@ def sql_cmd(
 def rankings_sources_cmd():
     """List the ranking sites this app knows how to scrape."""
     render(
-        [(name, src.url, "last --url pulled" if src.remembers_url else "fixed")
+        [(name, src.url,
+          "a downloaded --file" if src.from_file
+          else "last --url pulled" if src.remembers_url else "fixed")
          for name, src in sorted(SOURCES.items())],
         ["source", "default url", "defaults to"],
         title="Ranking sources",
@@ -682,11 +684,14 @@ def rankings_pull_cmd(
     url: str = typer.Option(None, "--url", help="Override the source's default URL. "
                                                 "For angle_dynasty this can be the "
                                                 "rankings post or the sheet itself."),
+    file: str = typer.Option(None, "--file", help="Read the rankings from a downloaded "
+                                                  "file instead of fetching. Required "
+                                                  "for lineupexperts_dynasty."),
 ):
-    """Scrape a ranking site and append it to the database."""
+    """Scrape a ranking site (or read its downloaded export) and append it to the database."""
     try:
-        with console.status(f"[cyan]fetching {source}[/cyan]"):
-            result = rankings_mod.run(source, url)
+        with console.status(f"[cyan]{'reading' if file else 'fetching'} {source}[/cyan]"):
+            result = rankings_mod.run(source, url, file)
     except Exception as exc:
         fail(str(exc))
 
@@ -698,9 +703,12 @@ def rankings_pull_cmd(
         f"— {result.rows} players, {result.matched} matched to your league snapshot"
     )
     console.print(f"[dim]from {result.source_url}[/dim]")
-    if result.fetched_url and result.fetched_url != result.source_url:
+    from_file = (result.fetched_url or "").startswith("file:")
+    if from_file:
+        console.print(f"[dim]read from {result.fetched_url[5:]}[/dim]")
+    elif result.fetched_url and result.fetched_url != result.source_url:
         console.print(f"[dim]resolved to {result.fetched_url}[/dim]")
-    if result.remembered:
+    if result.remembered and not from_file:
         console.print("[dim]later pulls of this source reuse that URL — pass --url "
                       "with a newer post or sheet when one is published.[/dim]")
     if result.matched < result.rows:

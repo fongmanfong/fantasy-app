@@ -131,6 +131,13 @@ with a league key, because none is specific to one league.
   is an annual article (a Top 100 with rank, team and age, no positions), and
   each season's edition gets a new URL. Its headline is stored as
   `extra["edition"]`, the same way Angle's sheet title is.
+- **`lineupexperts_dynasty` cannot be fetched**, by design. The page sits behind
+  Cloudflare's bot challenge, and this app does not impersonate a browser to get
+  past it. The source is registered `from_file=True`: the user downloads the
+  CSV export, `rankings pull lineupexperts_dynasty --file <csv>` reads it, and a
+  pull without `--file` refuses before opening a pull row. Its team codes are
+  ESPN's (`SA`, `NY`, `UTAH`, ...), rewritten to the NBA's in the parser. One
+  known name miss: it prints GG Jackson as "Gregory Jackson".
 - **One ranking out of several.** `rankings composite build` folds every source
   of the same registry `kind` (`Source.kind`, currently all `dynasty`) into one
   ordering and appends it as a `composite_runs` row plus its `composite_rankings`
@@ -145,7 +152,7 @@ with a league key, because none is specific to one league.
   moves the order, and those three rules move players tens of places.
 - **Only one source writes prose.** hashtagbasketball puts a "Dynasty Outlook"
   next to some of its numbers, stored as `extra["outlook"]` and read with
-  `rankings show --notes`. Angle, dynatyze and RotoWire publish none — checked against
+  `rankings show --notes`. Angle, dynatyze, RotoWire and LineupExperts publish none — checked against
   Angle's raw CSV and dynatyze's own `dynasty-rankings.md` endpoint, and written
   into both module docstrings so it is not re-investigated. RotoWire's prose is
   article-level tier talk, not a note per player. `extra` is a JSON
@@ -363,11 +370,11 @@ the terminal would want, it belongs in `query.py` or `analysis/`.
   exit non-zero on failure. No network and no database *file* — `rules.py` and
   the report are tested against in-memory DuckDB fixtures.
   ```sh
-  .venv/bin/python tests/run_all.py          # all eleven, one line each
+  .venv/bin/python tests/run_all.py          # all twelve, one line each
   .venv/bin/python tests/test_analysis.py    # or any one on its own
   ```
-  The eleven are `test_parse`, `test_analysis`, `test_report`, `test_names`,
-  `test_rankings`, `test_dynatyze`, `test_rotowire`, `test_angle`, `test_schedule`,
+  The twelve are `test_parse`, `test_analysis`, `test_report`, `test_names`,
+  `test_rankings`, `test_dynatyze`, `test_rotowire`, `test_lineupexperts`, `test_angle`, `test_schedule`,
   `test_history`, `test_composite`. `test_composite` is the exception to "no
   database": it builds the real `schema.sql` in an in-memory DuckDB, because
   half of what it is checking is the round trip through the store.
